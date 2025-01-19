@@ -4,6 +4,7 @@
 # by representing image as a collection of flux elements
 # and performing global minimization of -log_likelihood
 # using simulated annealing algorithm.
+# inspired by SQUEEZE (https://github.com/fabienbaron/squeeze)
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -23,7 +24,7 @@ def locs2image(locs, axis_len):
 
 class BaseImageReconstructor:
     '''
-    Base class for image reconstruction using simulated annealing
+    Base class for MCMC image reconstruction using simulated annealing
     '''
 
     vectype = np.float32 # or np.complex_

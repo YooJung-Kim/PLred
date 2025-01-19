@@ -4,12 +4,11 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import os
 from scipy.interpolate import griddata, interp1d
-from .imageutils import find_3point_peak, find_9point_peak_2d, iter_find_blob, apply_patch, find_centroid
+from PLred.imageutils import find_3point_peak, find_9point_peak_2d, iter_find_blob, apply_patch, find_centroid
 
+# need to store this information somewhere else, maybe in the config file
 model_savedir = '/home/first/yjkim/visPL_tests/conf/models/'
 
-polar_1 = np.array([0,1,2,4, 6, 8,10,12,14,16,18,20,22,24,26,28,30,32,34]) 
-polar_2 = np.array([3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33,35,36,37]) 
 
 def shift_spectrum(spectrum, shift):
     # Fourier transform
@@ -250,21 +249,6 @@ def frame_to_spec(frame, xmin, xmax, wavmap = None,
     else:
         return interpolated_spec
     
-
-# Function to downsample high-res spectrum to low-res grid
-# actually need to check if this works
-def downsample_spectrum(high_wave, high_flux, low_wave):
-    low_flux = np.zeros(len(low_wave) - 1)  # Output array for downsampled flux
-    low_wave_centers = (low_wave[:-1] + low_wave[1:]) / 2  # Bin centers
-    for i in range(len(low_flux)):
-        # Find indices of high-res data within each low-res bin
-        in_bin = (high_wave >= low_wave[i]) & (high_wave < low_wave[i+1])
-        if np.any(in_bin):  # If there are points in the bin
-            # Integrate the flux over the bin
-            low_flux[i] = np.trapezoid(high_flux[in_bin], high_wave[in_bin])
-            # Normalize by bin width for flux conservation
-            low_flux[i] /= (low_wave[i+1] - low_wave[i])
-    return low_wave_centers, low_flux
 
 class SpectrumModel:
 
@@ -759,7 +743,7 @@ class SpectrumModel:
     def construct_matrix(self, xmin, xmax, ycoor_correction_map):
 
         from scipy.sparse import lil_matrix
-        from .datautils import filter_nans
+        from ..datautils import filter_nans
 
         A = lil_matrix(((xmax-xmin)* self.NFIB, self.NY * (xmax - xmin)))
         
@@ -932,153 +916,6 @@ class SpectrumModel:
         print("model saved to %s" % model_savedir+filename)
                 
 
-    # def construct_image_vector(self, im, xmin, xmax):
-
-    #     return im[:,xmin:xmax].flatten()
-    
-    # def get_reconstructed_image(self, im, xmin, xmax):
-        
-    #     imvec = self.construct_image_vector(im, xmin, xmax)
-
-    #     from scipy.sparse.linalg import lsmr
-    #     out = lsmr(self.A.T, imvec)
-    #     recon = out[0] @ self.A
-    #     return recon
-    
-    # def recover_spectra(self, imvec, var_const = 200, thresh = 1e-1):
-    #     """
-    #     Recover spectra from detector image using regularized spectral extraction
-    #     """
-    #     from scipy.sparse import diags
-    #     from scipy.sparse.linalg import lsmr
-
-        
-    #     w = imvec + var_const 
-    #     W = diags(w, 0)
-    #     ATW = self.A @ W
-    #     ATWA = ATW.dot(self.A.T)
-    #     ATWx = ATW.dot(imvec)
-    #     ATWAdiag = ATWA.diagonal()
-
-    #     damp = thresh * ATWAdiag.max()
-    #     spec_lw, istop, itn, normr, normar, norma, conda, normx = \
-    #         lsmr(ATWA, ATWx,
-    #             damp=damp,
-    #             )
-        
-    #     recon = spec_lw @ self.A
-    #     return spec_lw, recon        
-
-#     def get_raw_cutouts(self, fibind, wavind, blob_find_width = 3, blob_thres = 8e-3,
-#                         blob_maxwidth = 8, centroid_thres = 1,
-#                         plot = True,
-#                         display_extended_width = 0):
-
-#         masked_im, x0, x1, y0, y1 = iter_find_blob(self.neon, self.ini_xs[fibind, wavind], self.ini_ys[fibind, wavind], 
-#                                                    ini_width=blob_find_width, thres=blob_thres,
-#                                                     maxwidth = blob_maxwidth,
-#                                                     plot = False,
-#                                                     return_masked = True
-#                                                     ) 
-        
-#         (cy, cx), method_name = find_centroid(masked_im, verbose=False, thres = centroid_thres)
-
-#         ydim, xdim = masked_im.shape
-#         yg, xg = np.meshgrid(np.arange(ydim), np.arange(xdim))
-
-#         if plot:
-
-#             plt.clf()
-#             # fig, axs = plt.subplots(ncols=2, figsize=(10,5))
-#             plt.imshow(self.neon[y0-display_extended_width:y1+display_extended_width,x0-display_extended_width:x1+display_extended_width], origin='lower',
-#                     extent = (display_extended_width-0.5 - cx, x1 - x0 + display_extended_width-0.5 - cx,
-#                               display_extended_width-0.5 - cy, y1 - y0 +display_extended_width-0.5 - cy))
-#             # plt.axvline(x0 - cx, color='white', alpha=0.5, linestyle=':')
-#             # plt.axvline(x1, color='white', alpha=0.5, linestyle=':')
-#             # plt.axhline(y0, color='white', alpha=0.5, linestyle=':')
-#             # plt.axhline(y1, color='white', alpha=0.5, linestyle=':')
-#             # self.plot_traces()
-            
-#             plt.xlim([display_extended_width - cx, x1 - x0 +display_extended_width - cx])
-#             plt.ylim([display_extended_width - cy, y1 - y0 +display_extended_width - cy])
-
-#             # plt.title('centroid (x,y) = (%.3f, %.3f)' % (cx+x0, cy+y0))
-#             plt.plot(0, 0, 'o', color='red', label = 'centroid')
-#             plt.legend()
-
-#             for (y, x) in zip(yg.flatten(), xg.flatten()):
-#                 plt.plot(x - cx, y - cy, 'x', color='black')
-
-#         return masked_im, xg-cx, yg-cy # x0, x1, y0, y1
-
-#     def get_subpixel_fluxes(self, fibindrange, wavindrange):
-
-#         all_ims = []
-#         all_xgs = []
-#         all_ygs = []
-
-#         i = 0
-#         for fibind in fibindrange:
-#             for wavind in wavindrange:
-#                 ims, xgs, ygs = self.get_raw_cutouts(fibind, wavind, plot=False)
-
-#                 if i == 0:
-#                     all_ims = ims.flatten()
-#                     all_xgs = xgs.flatten()
-#                     all_ygs = ygs.flatten()
-                
-#                 else:
-#                     all_ims = np.concatenate([all_ims, ims.flatten()])
-#                     all_xgs = np.concatenate([all_xgs, xgs.flatten()])
-#                     all_ygs = np.concatenate([all_ygs, ygs.flatten()])
-
-#                 i += 1
-
-
-#         plt.scatter(all_xgs, all_ygs, c = all_ims)
-
-#         return all_xgs, all_ygs, all_ims
-
-
-
-# def average_subpixels(xgs, ygs, ims, width = 0.5):
-
-#     from bisect import bisect
-
-#     new_xg = np.arange(int(min(xgs)), int(max(xgs)), width)
-#     new_yg = np.arange(int(min(ygs)), int(max(ygs)), width)
-
-#     new_im = np.zeros((len(new_xg), len(new_yg)))
-#     new_weight = np.zeros((len(new_xg), len(new_yg)))
-
-#     for (x,y, im) in zip(xgs, ygs, ims):
-
-#         xind = bisect(new_xg, x)
-#         yind = bisect(new_yg, y)
-
-#         new_im[xind-1, yind-1] += im
-#         new_weight[xind-1, yind-1] += 1
-    
-#     return new_im, new_weight
-
-
-
-
-    
-    # def 
-
-    # def get_clean_LSF_stamps(self, )
-
-# class LSFModel:
-
-#     def __init__(self, xcoord, ycoord, image):
-
-#         self.xcoord = xcoord
-#         self.ycoord = ycoord
-#         self.image = image
-
-
-# def 
 
 if __name__ == '__main__':
 
