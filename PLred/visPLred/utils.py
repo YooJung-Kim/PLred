@@ -8,7 +8,7 @@ import glob
 import re
 
 from .parameters import telescope_params, firstcam_params
-from .extract_spec import frame_to_spec
+from .spec import frame_to_spec
 
 diameter = telescope_params['diameter']
 NFIB = firstcam_params['NFIB']

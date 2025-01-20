@@ -7,7 +7,7 @@ from scipy.interpolate import griddata, interp1d
 from PLred.imageutils import find_3point_peak, find_9point_peak_2d, iter_find_blob, apply_patch, find_centroid
 
 # need to store this information somewhere else, maybe in the config file
-model_savedir = '/home/first/yjkim/visPL_tests/conf/models/'
+# model_savedir = '/home/first/yjkim/visPL_tests/conf/models/'
 
 
 def shift_spectrum(spectrum, shift):
@@ -284,7 +284,7 @@ class SpectrumModel:
 
     VERTICAL_TRACE = False
 
-    def __init__(self, modelfile = None, tracefile = None, neonfile = None, flatfile = None):
+    def __init__(self, modelname, neonfile = None, flatfile = None):
 
         '''
         Build visible PL spectrum model using Neon and Flat data.
@@ -301,16 +301,10 @@ class SpectrumModel:
         6) save_spectra_model() to save the model
         '''
 
-        if modelfile is not None:
+        # if modelfile is not None:
             
-            self.model = self.load_LSF_model(modelfile)
-            print('Spectrum Model file %s loaded' % modelfile)
-
-        
-        if tracefile is not None:
-
-            self.load_trace(tracefile)
-            print('Trace file %s loaded' % tracefile)
+        #     self.model = self.load_model(modelfile)
+        #     print('Spectrum Model file %s loaded' % modelfile)
         
         if neonfile is not None:
 
@@ -322,7 +316,10 @@ class SpectrumModel:
             self.flat = np.load(flatfile)
             print('Flat file %s loaded' % flatfile)
 
-        os.makedirs('cutout_LSFs', exist_ok = True)
+        
+        os.makedirs(modelname, exist_ok = True)
+        print("model will be saved in", modelname)
+        self.modelname = modelname
 
     def find_peaks(self, window = 6, min_dist = 5, use_peakutils = True, thres = 0.05, plot = True):
         '''
@@ -370,25 +367,25 @@ class SpectrumModel:
                 plt.plot(x, y, 'x', color='red')
             plt.title('Initial Neon line positions')
 
-    def load_trace(self, tracefile):
+    # def load_trace(self, tracefile):
 
-        trace_coeffs = np.load(tracefile)
+    #     trace_coeffs = np.load(tracefile)
 
-        self.trace_funcs = []
-        self.trace_vals = []
-        self.trace_poly_coeffs = []
+    #     self.trace_funcs = []
+    #     self.trace_vals = []
+    #     self.trace_poly_coeffs = []
 
-        for fibind in range(self.NFIB):
-            opt = trace_coeffs[fibind] 
-            fun = np.poly1d(opt)
+    #     for fibind in range(self.NFIB):
+    #         opt = trace_coeffs[fibind] 
+    #         fun = np.poly1d(opt)
             
-            self.trace_funcs.append(fun)
-            self.trace_vals.append(fun(self.XARR))
-            self.trace_poly_coeffs.append(opt)
+    #         self.trace_funcs.append(fun)
+    #         self.trace_vals.append(fun(self.XARR))
+    #         self.trace_poly_coeffs.append(opt)
 
 
     def trace_spectra(self, ini_wav_ind, trace_width = 4, poly_deg = 5, verbose = False,
-                      save = False, filename = 'trace'):
+                      save = False):
 
         trace_out = np.zeros((self.NFIB, self.XMAX - self.XMIN))
 
@@ -486,8 +483,8 @@ class SpectrumModel:
         self.raw_trace = trace_out
 
         if save:
-            np.save(filename+'.npy', self.trace_poly_coeffs)
-            print(filename+'.npy saved')
+            np.save(self.modelname+'/trace.npy', self.trace_poly_coeffs)
+            print(self.modelname+'/trace.npy saved')
 
 
     def plot_traces(self):
@@ -513,21 +510,21 @@ class SpectrumModel:
         self.VERTICAL_TRACE = True
 
 
-    def load_LSF_model(self, modelname):
+    # def load_LSF_model(self, modelname):
 
-        loaded = np.load(modelname, allow_pickle = True)
+    #     loaded = np.load(modelname, allow_pickle = True)
 
-        self.lsf_cutouts = loaded['cutouts']
-        self.lsf_xcoors = loaded['xcoors']
-        self.lsf_ycoors = loaded['ycoors']
-        self.lsf_flag = loaded['flag']
-        self.lsf_centroid_methods = loaded['method']
+    #     self.lsf_cutouts = loaded['cutouts']
+    #     self.lsf_xcoors = loaded['xcoors']
+    #     self.lsf_ycoors = loaded['ycoors']
+    #     self.lsf_flag = loaded['flag']
+    #     self.lsf_centroid_methods = loaded['method']
 
-        self.flat_lsf_xcoors = self.lsf_xcoors.flatten()
-        self.flat_lsf_ycoors = self.lsf_ycoors.flatten()
-        self.flat_lsf_cutouts = np.reshape(self.lsf_cutouts, newshape=(self.NFIB*self.NWAV, np.shape(self.lsf_cutouts)[2], np.shape(self.lsf_cutouts)[3]))
+    #     self.flat_lsf_xcoors = self.lsf_xcoors.flatten()
+    #     self.flat_lsf_ycoors = self.lsf_ycoors.flatten()
+    #     self.flat_lsf_cutouts = np.reshape(self.lsf_cutouts, newshape=(self.NFIB*self.NWAV, np.shape(self.lsf_cutouts)[2], np.shape(self.lsf_cutouts)[3]))
 
-        print("models loaded from", modelname)
+    #     print("models loaded from", modelname)
 
 
     def make_clean_LSF_models(self, gridsize = 15, blob_find_width = 3, blob_thres = 1.2e-2, blob_maxwidth = 8,
@@ -535,11 +532,11 @@ class SpectrumModel:
                             # use_25point_peak = False
                             centroid_thres = 1, 
                             save = False,
-                            filename = 'LSF_model'
+                            # filename = 'LSF_model'
                             ):
         
 
-        os.makedirs('cutout_LSFs', exist_ok=True)
+        os.makedirs(self.modelname+'/cutout_LSFs', exist_ok=True)
         # plt.tight_layout()
 
         self.lsf_failed_indices = []
@@ -590,7 +587,7 @@ class SpectrumModel:
                     self.lsf_failed_indices.append((fibind, wavind))
 
 
-            fig.savefig('cutout_LSFs/port%d.png' % (fibind))
+            fig.savefig(self.modelname+'/cutout_LSFs/port%d.png' % (fibind))
             # axs[wavind].set_title('(%.2f, %.2f)' % (xcoor, ycoor))
 
         self.flat_lsf_xcoors = self.lsf_xcoors.flatten()
@@ -600,14 +597,14 @@ class SpectrumModel:
         # plt.show()
 
         if save:
-            np.savez(filename+'.npz',
+            np.savez(self.modelname+'/LSF.npz',
                      cutouts = self.lsf_cutouts,
                      xcoors = self.lsf_xcoors,
                      ycoors = self.lsf_ycoors,
                      flag = self.lsf_flag,
                      method = self.lsf_centroid_methods
                      )
-            print(filename+'.npz saved')
+            print(self.modelname+'/LSF.npz saved')
 
     def validate_cutout_LSF(self, cutout, thres = 1):
 
@@ -743,7 +740,7 @@ class SpectrumModel:
     def construct_matrix(self, xmin, xmax, ycoor_correction_map):
 
         from scipy.sparse import lil_matrix
-        from ..datautils import filter_nans
+        from .utils import filter_nans
 
         A = lil_matrix(((xmax-xmin)* self.NFIB, self.NY * (xmax - xmin)))
         
@@ -846,8 +843,10 @@ class SpectrumModel:
             recons.append(recon)
 
             if save_intermediate: 
-                np.save('iter%d_A.npy' % i, A.toarray())
-                np.save('iter%d_ycorr.npy' % i, ycoor_correction_map)
+
+                self.save_spectra_model('iter%d' % i)
+                # np.save('iter%d_A.npy' % i, A.toarray())
+                # np.save('iter%d_ycorr.npy' % i, ycoor_correction_map)
 
 
         fig, axs = plt.subplots(ncols=n_iter, figsize=(n_iter * 5, 5))
@@ -899,22 +898,57 @@ class SpectrumModel:
 
     def save_spectra_model(self, filename):
 
-        np.savez(filename+'.npz',
-                 matrix = self.A,
-                 wav_map = self.wav_map,
-                 info = self.info
-                 )
-        print(filename+'.npz saved')
+        # np.savez(filename+'.npz',
+        #          matrix = self.A,
+        #          wav_map = self.wav_map,
+        #          info = self.info
+        #          )
+        # print(filename+'.npz saved')
 
         # I need to do this because lab testing code runs in a different environment
         # which doesn't allow loading the file above
         
-        from scipy.sparse import save_npz
-        save_npz(model_savedir+filename+'_matrix.npz', self.A)
-        np.save(model_savedir+filename+'_wavmap.npy', self.wav_map)
-        np.save(model_savedir+filename+'_info.npy', self.info)
-        print("model saved to %s" % model_savedir+filename)
-                
+
+        try:
+            from scipy.sparse import save_npz
+            save_npz(self.modelname+'/'+filename+'_matrix.npz', self.A)
+            print("matrix saved to %s" % self.modelname+'/'+filename+'_matrix.npz')
+        except:
+            print("couldn't save the matrix.")
+        
+        try:
+            np.save(self.modelname+'/'+filename+'_wavmap.npy', self.wav_map)
+            print("wavmap saved to %s" % self.modelname+'/'+filename+'_wavmap.npy')
+        except:
+            print("couldn't save the wavmap.")
+        
+        try:
+            np.save(self.modelname+'/'+filename+'_info.npy', self.info)
+            print("info saved to %s" % self.modelname+'/'+filename+'_info.npy')
+        except:
+            print("couldn't save the info.")
+
+
+    def load_spectra_model(self, filename):
+
+
+        try:
+            from scipy.sparse import load_npz
+            self.A = load_npz(self.modelname+'/'+filename+'_matrix.npz')
+        except:
+            print("couldn't load the matrix.")
+
+        try:
+            self.wav_map = np.load(self.modelname+'/'+filename+'_wavmap.npy')
+        except:
+            print("couldn't load the wavmap.")
+        
+        try:
+            self.info = np.load(self.modelname+'/'+filename+'_info.npy', allow_pickle = True)
+        except:
+            print("couldn't load the info.")
+
+        print("model loaded from", self.modelname+'/'+filename)
 
 
 if __name__ == '__main__':
