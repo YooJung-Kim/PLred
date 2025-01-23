@@ -19,7 +19,7 @@ Data reduction and image reconstruction tools for photonic lantern spectra.
 To install, run:
 
 ```bash
-pip install -e ,
+pip install -e .
 ```
 
 ## Usage
