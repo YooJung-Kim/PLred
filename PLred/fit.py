@@ -25,6 +25,9 @@ class PLMapFit:
         self.observed = observed
         self.observed_err = observed_err
 
+        idx = ~np.isfinite(self.observed_err)
+        self.observed_err[idx] = 1e6 # some random big number
+      
     def make_matrix(self, specind, fiber_inds):
 
         self.mat = self.mapmodel.make_matrix(specind, fiber_inds)
