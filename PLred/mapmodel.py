@@ -4,7 +4,7 @@ from astropy.io import fits
 from scipy.linalg import lstsq
 from tqdm import tqdm
 
-NFIB = 38
+NFIB = 38 # this should be replaced
 
 def poly_design_matrix(x, y, degree):
     terms = []
