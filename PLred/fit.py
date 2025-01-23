@@ -27,6 +27,8 @@ class PLMapFit:
 
         idx = ~np.isfinite(self.observed_err)
         self.observed_err[idx] = 1e6 # some random big number
+
+        # just for github test
       
     def make_matrix(self, specind, fiber_inds):
 
