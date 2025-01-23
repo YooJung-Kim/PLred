@@ -338,7 +338,7 @@ class CouplingMapImageReconstructor(BaseImageReconstructor):
         '''
         current_observable = vec
         # chi^2 / 2
-        current_ll = np.sum((current_observable - self.data)**2 / self.data_err**2) / self.ndf / 2
+        current_ll = np.nansum((current_observable - self.data)**2 / self.data_err**2) / self.ndf / 2
         return current_ll
 
 
