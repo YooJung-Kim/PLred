@@ -175,3 +175,4 @@ PLred/visPLred/development/
 
 # example code outputs
 PLred/visPLred/examples/example_extract_spec/model/
+PLred/visPLred/examples/example_couplingmap/*.fits

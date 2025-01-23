@@ -3,6 +3,8 @@ import numpy as np
 from .imgrecon import CouplingMapImageReconstructor
 from .mapmodel import CouplingMapModel
 
+# here I intend to add model fitting as well
+
 class PLMapFit:
 
     def __init__(self, model_file, image_ngrid, image_fov, n_trim):
