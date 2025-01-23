@@ -37,7 +37,6 @@ def calculate_bootstrap_variance_map(firstcamframes, idxs, nbootstrap = 100):
 
     '''
     Calculate the bootstrap variance maps
-
     '''
 
     arr = np.arange(len(firstcamframes))
@@ -108,12 +107,37 @@ def validate_timestamp_matching(timestamps1, timestamps2):
 
 
 class SimultaneousData:
-
+    '''
+    Class to handle simultaneous data from two cameras
+    '''
     def __init__(self, firstcam_timestamp_path, firstcam_spec_path,
                  obs_start, obs_end,
                  psfcam, 
                  psfcam_frames_name, psfcam_timestamp_name,
                  match_frames = True):
+        
+        '''
+        Initialize the class
+
+        Parameters
+        ----------
+        firstcam_timestamp_path: str
+            path to the first camera timestamp files
+        firstcam_spec_path: str
+            path to the first camera spectrum files
+        obs_start: str (HH:MM:SS)
+            start time of the observation
+        obs_end: str (HH:MM:SS)
+            end time of the observation
+        psfcam: str
+            name of the psfcam (palila or vcam)
+        psfcam_frames_name: str
+            name of the psfcam frames file
+        psfcam_timestamp_name: str
+            name of the psfcam timestamp file
+        match_frames: bool
+            whether to match the frames    
+        '''
         
 
         self.firstcam_timestamp_path = firstcam_timestamp_path
@@ -136,6 +160,10 @@ class SimultaneousData:
 
     
     def match_frames(self):
+
+        '''
+        Match the frames from the two cameras
+        '''
 
         firstcam_timestampfiles = find_data_between(self.firstcam_timestamp_path, self.obs_start, self.obs_end, header='firstpl_', footer='.txt')
         firstcam_specfiles = find_data_between(self.firstcam_spec_path, self.obs_start, self.obs_end, header='firstpl_', footer='_spec.fits')
@@ -167,6 +195,10 @@ class SimultaneousData:
 
     def compute_psfcam_centroids(self):
 
+        '''
+        Compute the centroids of the psfcam frames
+        '''
+
         centroids = []
         for t in range(len(self.psfcam_frames)):
             try:
@@ -180,6 +212,25 @@ class SimultaneousData:
         self.centroids = centroids
 
     def bin_by_centroids(self, map_n, map_width, effective_idx = None, plot = True, calculate_variance = True, nbootstrap = 100):
+
+        '''
+        Bin the frames by centroids
+        
+        Parameters
+        ----------
+        map_n: int
+            number of bins in x and y
+        map_width: float
+            width of the map in pixels
+        effective_idx: array
+            indices of the frames to consider
+        plot: bool
+            whether to plot the number of frames averaged
+        calculate_variance: bool
+            whether to calculate the bootstrap variance map
+        nbootstrap: int
+            number of bootstrap iterations
+        '''
 
         if effective_idx is not None:
             centroids = self.centroids[effective_idx]
@@ -223,7 +274,14 @@ class SimultaneousData:
             self.var, self.normvar = calculate_bootstrap_variance_map(firstcam_frames, self.idxs, nbootstrap = nbootstrap)
     
     def save(self, filename):
-
+        '''
+        Save the data to a fits file
+        
+        Parameters
+        ----------
+        filename: str
+            name of the fits file
+        '''
         header = fits.Header()
         header['XMIN'] = self.xmin
         header['XMAX'] = self.xmax
