@@ -4,7 +4,7 @@ from astropy.io import fits
 from scipy.linalg import lstsq
 from tqdm import tqdm
 
-NFIB = 38 # this should be replaced
+# NFIB = 38 # this should be replaced
 
 def poly_design_matrix(x, y, degree):
     terms = []
@@ -115,6 +115,7 @@ class CouplingMapModel:
             self.datavar = self.map_fits[3].data
             self.datanormvar = self.map_fits[4].data
             self.pos_mas = np.linspace(self.map_header['XMIN'], self.map_header['XMAX'], self.map_header['MAP_N'])
+            self.nfib = self.normdata.shape[2]
 
             print("masking data with less than {} frames".format(min_nframes))
             self.min_nframes = min_nframes
@@ -135,22 +136,24 @@ class CouplingMapModel:
             self.datanormvar = self.model_fits[3].data
             self.chi2 = self.model_fits[4].data
             self.pos_mas = np.linspace(self.model_header['XMIN'], self.model_header['XMAX'], self.model_header['MAP_N'])
-        
+
+            self.nfib = self.normdata.shape[2]
+
             x_grid, y_grid = np.meshgrid(self.pos_mas, self.pos_mas)
             self.x_flat = x_grid.ravel()
             self.y_flat = y_grid.ravel()
             X_poly = poly_design_matrix(self.x_flat, self.y_flat, self.model_header['NPOLY1'])
             self.wav_reconrange = np.arange(self.model_header['MIN_WAV'], self.model_header['MAX_WAV']+1)
-            self.all_modeled_recons = np.zeros((len(self.pos_mas), len(self.pos_mas), NFIB, len(self.wav_reconrange)))
+            self.all_modeled_recons = np.zeros((len(self.pos_mas), len(self.pos_mas), self.nfib, len(self.wav_reconrange)))
             
-            for fibind in range(NFIB):
+            for fibind in range(self.nfib):
                 for specind in range(len(self.wav_reconrange)):
                     coeffs = self.model_coeffs[fibind, specind]
                     recon = np.dot(X_poly, coeffs)
                     self.all_modeled_recons[:,:,fibind,specind] = recon.reshape((len(self.pos_mas), len(self.pos_mas)))
         
-        if self.data is None:
-            print("No data loaded. load either mapdata or model")
+        # if self.data is None:
+        #     print("No data loaded. load either mapdata or model")
         
 
     def make_polynomial_model(self, output_name,
@@ -180,7 +183,7 @@ class CouplingMapModel:
         
         all_modeled_coeffs, all_modeled_recons, all_map_inputs = [], [] ,[]
 
-        for fibind in tqdm(range(NFIB)):
+        for fibind in tqdm(range(self.nfib)):
 
             modeled_coeffs, modeled_recon, all_map_input = make_interpolation_model(self.normdata[:,:,fibind,:], 
                                                                                     self.pos_mas, 
@@ -209,6 +212,7 @@ class CouplingMapModel:
 
         if output_name is not None:
             hdu = fits.PrimaryHDU(all_modeled_coeffs)
+            hdu.header['NFIB'] = self.nfib
             hdu.header['XMIN'] = min(self.pos_mas)
             hdu.header['XMAX'] = max(self.pos_mas)
             hdu.header['MAP_N'] = len(self.pos_mas)
