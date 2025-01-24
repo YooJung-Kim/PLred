@@ -116,6 +116,7 @@ class CouplingMapModel:
             self.datanormvar = self.map_fits[4].data
             self.pos_mas = np.linspace(self.map_header['XMIN'], self.map_header['XMAX'], self.map_header['MAP_N'])
             self.nfib = self.normdata.shape[2]
+            self.map_n = self.map_header['MAP_N']
 
             print("masking data with less than {} frames".format(min_nframes))
             self.min_nframes = min_nframes
@@ -136,7 +137,7 @@ class CouplingMapModel:
             self.datanormvar = self.model_fits[3].data
             self.chi2 = self.model_fits[4].data
             self.pos_mas = np.linspace(self.model_header['XMIN'], self.model_header['XMAX'], self.model_header['MAP_N'])
-
+            self.map_n = self.model_header['MAP_N']
             self.nfib = self.normdata.shape[2]
 
             x_grid, y_grid = np.meshgrid(self.pos_mas, self.pos_mas)
@@ -265,7 +266,12 @@ class CouplingMapModel:
 
                 X_poly_shifted = poly_design_matrix(self.x_flat + x_shift, self.y_flat + y_shift, self.model_header['NPOLY1'])
                 recon_shifted = np.dot(X_poly_shifted, self.model_coeffs[fibind,specind])
-                trimmed = recon_shifted.reshape((15,15))[self.n_trim:-self.n_trim, self.n_trim:-self.n_trim].flatten()
+                
+                if self.n_trim > 0:
+                    trimmed = recon_shifted.reshape((self.map_n,self.map_n))[self.n_trim:-self.n_trim, self.n_trim:-self.n_trim].flatten()
+                else:
+                    trimmed = recon_shifted
+                    
                 _mat.append(trimmed)
             mat.append(np.array(_mat).ravel())
         

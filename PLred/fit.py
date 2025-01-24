@@ -1,5 +1,6 @@
 import numpy as np
 from astropy.io import fits
+import matplotlib.pyplot as plt
 
 from .imgrecon import CouplingMapImageReconstructor
 from .mapmodel import CouplingMapModel
@@ -31,10 +32,14 @@ class PLMapFit:
             specind = self.mat_specind
             print("preparing data for specind", specind)
 
-        observed = self.mapmodel.normdata[self.n_trim:-self.n_trim,self.n_trim:-self.n_trim,fiber_inds, specind]
-        observed = np.transpose(observed, (2,0,1)).flatten()
+        if self.n_trim > 0:
+            observed = self.mapmodel.normdata[self.n_trim:-self.n_trim,self.n_trim:-self.n_trim,fiber_inds, specind]
+            observed_err = self.mapmodel.datanormvar[self.n_trim:-self.n_trim,self.n_trim:-self.n_trim,fiber_inds, specind]
+        else:
+            observed = self.mapmodel.normdata[:,:,fiber_inds, specind]
+            observed_err = self.mapmodel.datanormvar[:,:,fiber_inds, specind]
 
-        observed_err = self.mapmodel.datanormvar[self.n_trim:-self.n_trim,self.n_trim:-self.n_trim,fiber_inds, specind]
+        observed = np.transpose(observed, (2,0,1)).flatten()
         observed_err = np.sqrt(np.transpose(observed_err, (2,0,1)).flatten())
 
         self.observed = observed
@@ -67,6 +72,7 @@ class PLMapFit:
         subsampled = np.hstack(subsampled)
 
         self.mat = subsampled
+        self.subsampled_fiber_inds = fiber_inds
 
 
     def save_matrix_to_file(self, filename):
@@ -123,9 +129,80 @@ class PLMapFit:
         self.rc.make_prior(prior_type, **kwargs)
         self.rc.run_chain(niter, plot_every = plot_every)
 
+        print("Final chi2", self.rc.current_ll*2)
         return self.rc
+
     
-    # def plot_diagnostic(self):
+    def plot_data(self, vmax=0.02):
+
+        n = self.mapmodel.map_n - 2 * self.n_trim
+        reshaped = np.reshape(self.rc.data, shape = (-1, n, n))
+        titles = ['port %d' % i for i in self.subsampled_fiber_inds]
+
+        plot_maps(reshaped, titles = titles, vmin = 0, vmax= vmax, suptitle= 'Data')
+    
+    def plot_model(self, vmax=0.02):
+
+        n = self.mapmodel.map_n - 2 * self.n_trim
+        reshaped = np.reshape(self.rc.final_vec, shape = (-1, n, n))
+        titles = ['port %d' % i for i in self.subsampled_fiber_inds]
+
+        plot_maps(reshaped, titles = titles, vmin = 0, vmax= vmax, suptitle = 'Model')
+
+    def plot_residuals(self, vmax=0.002):
+
+        n = self.mapmodel.map_n - 2 * self.n_trim
+        reshaped = np.reshape((self.rc.data - self.rc.final_vec), shape = (-1, n, n))
+        titles = ['port %d' % i for i in self.subsampled_fiber_inds]
+
+        plot_maps(reshaped, titles = titles, vmin = -vmax, vmax= vmax, suptitle = 'Residuals',
+                  cmap = 'RdBu')
+    
+    def plot_1d(self, subsampled_fibind):
+
+        n = self.mapmodel.map_n - 2 * self.n_trim
+        reshaped = np.reshape(self.rc.data, shape = (-1, n**2))
+        reshaped_err = np.reshape(self.rc.data_err, shape = (-1, n**2))
+        reshaped_vec = np.reshape(self.rc.final_vec, shape = (-1, n**2))
+
+        fig = plt.figure(figsize=(10,5))
+
+        plt.errorbar(np.arange(n**2), reshaped[subsampled_fibind], yerr = reshaped_err[subsampled_fibind], label = 'data', fmt='o-', color='black')
+        plt.plot(np.arange(n**2), reshaped_vec[subsampled_fibind], label = 'reconstructed', color='red')
+        plt.legend()
+
+        chi2 = np.nanmean((reshaped[subsampled_fibind] - reshaped_vec[subsampled_fibind])**2/reshaped_err[subsampled_fibind]**2)
+        plt.title(r'port %d ($\chi^2$ = %.3f)' % (self.subsampled_fiber_inds[subsampled_fibind], chi2))
+        plt.show()
 
     #     self.rc.plot_diagnostic()
 
+
+
+def plot_maps(maps, titles=None, texts=None, origin='upper', vmin=None, vmax=None,
+              cmap = 'viridis', suptitle=None):
+
+    n_maps = len(maps)
+    ncols = min(5, n_maps)
+    nrows = (n_maps + ncols - 1) // ncols
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=(ncols*2, nrows*2), sharex=True, sharey=True)
+    
+    axes = axes.flatten()
+
+    for i, ax in enumerate(axes):
+        if i < n_maps:
+            im = ax.imshow(maps[i], origin=origin, vmin=vmin, vmax=vmax,
+                           cmap = cmap)
+            if titles is not None:
+                ax.set_title(titles[i], fontsize=8)
+            # if texts is not None:
+            #     ax.text(0.5, 0.5, texts[i], transform=ax.transAxes, fontsize=12, color='white', ha='center')
+        else:
+            ax.axis('off')
+
+    # fig.colorbar(im, ax=axes, orientation='vertical', fraction=0.02, pad=0.04)
+    plt.tight_layout()
+    if suptitle is not None:
+        plt.suptitle(suptitle, fontsize=16)
+    plt.show()
