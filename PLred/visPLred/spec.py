@@ -9,6 +9,36 @@ from PLred.imageutils import find_3point_peak, find_9point_peak_2d, iter_find_bl
 # need to store this information somewhere else, maybe in the config file
 # model_savedir = '/home/first/yjkim/visPL_tests/conf/models/'
 
+def shift_image_warpaffine(im, shift_x, shift_y):
+    ''' shift image using warpAffine '''
+    import cv2
+    # shift the image
+    M = np.float32([[1,0,shift_x], [0,1,shift_y]])
+    shifted = cv2.warpAffine(im, M, (im.shape[1], im.shape[0]))
+
+    return shifted
+
+def shift_image_fourier(im0, shift_x, shift_y, oversample_factor = 2, npad = 10):
+    ''' shift image using Fourier transform '''
+
+    from scipy.fft import fft2, ifft2, fftshift
+    from scipy.ndimage import zoom
+
+    im = zoom(im0, oversample_factor)
+    padded = np.pad(im, npad)
+
+    ny, nx = padded.shape
+    ky = np.fft.fftfreq(ny)
+    kx = np.fft.fftfreq(nx)
+    ky, kx = np.meshgrid(ky, kx)
+
+    fftim = fft2(padded)
+    phase_shift = np.exp(-2j*np.pi*(shift_y*ky + shift_x*kx))
+    shifted_fft = fftim * phase_shift
+    shifted_image = np.real(ifft2(shifted_fft))
+
+    return (zoom(shifted_image[npad:-npad, npad:-npad], 1/oversample_factor))
+
 
 def shift_spectrum(spectrum, shift):
     # Fourier transform
@@ -622,6 +652,7 @@ class SpectrumModel:
                             # use_center_of_mass = False,
                             # use_25point_peak = False,
                             # use_9point_peak = False,
+                            shift_method = 'fft',
                             centroid_thres = 1):
         
         import cv2
@@ -643,8 +674,15 @@ class SpectrumModel:
         shift_x, shift_y = 0, np.round(on_interp) - on_interp
 
         # shift the image
-        M = np.float32([[1,0,shift_x], [0,1,shift_y]])
-        shifted_blob = cv2.warpAffine(masked_im, M, (masked_im.shape[1], masked_im.shape[0]))
+        if shift_method == 'warpaffine':
+            shifted_blob = shift_image_warpaffine(masked_im, shift_x, shift_y)
+        elif shift_method == 'fft':
+            shifted_blob = shift_image_fourier(masked_im, shift_x, shift_y, oversample_factor = 2, npad = 10)
+        else:
+            raise ValueError("shift_method should be either 'warpaffine' or 'fft'")
+        
+        # M = np.float32([[1,0,shift_x], [0,1,shift_y]])
+        # shifted_blob = cv2.warpAffine(masked_im, M, (masked_im.shape[1], masked_im.shape[0]))
     
         # post on regular grid
         regular_grid = np.zeros((gridsize, gridsize))
