@@ -5,6 +5,36 @@ from scipy.ndimage import label, center_of_mass
 from scipy.optimize import curve_fit
 from scipy.signal import butter, filtfilt
 
+def shift_image_warpaffine(im, shift_x, shift_y):
+    ''' shift image using warpAffine '''
+    import cv2
+    # shift the image
+    M = np.float32([[1,0,shift_x], [0,1,shift_y]])
+    shifted = cv2.warpAffine(im, M, (im.shape[1], im.shape[0]))
+
+    return shifted
+
+def shift_image_fourier(im0, shift_x, shift_y, oversample_factor = 2, npad = 10):
+    ''' shift image using Fourier transform '''
+
+    from scipy.fft import fft2, ifft2, fftshift
+    from scipy.ndimage import zoom
+
+    im = zoom(im0, oversample_factor)
+    padded = np.pad(im, npad)
+
+    nx, ny = padded.shape
+    ky = np.fft.fftfreq(ny)
+    kx = np.fft.fftfreq(nx)
+    ky, kx = np.meshgrid(ky, kx)
+
+    fftim = fft2(padded)
+    phase_shift = np.exp(-2j*np.pi*(shift_y*ky + shift_x*kx))
+    shifted_fft = fftim * phase_shift
+    shifted_image = np.real(ifft2(shifted_fft))
+
+    return (zoom(shifted_image[npad:-npad, npad:-npad], 1/oversample_factor))
+
 
 def parabolic_2d(coords, a, b, c, d, e, f):
     """2D parabolic function for fitting."""
@@ -284,14 +314,17 @@ def extract_patch(image, xcoor, ycoor, xwidth, ywidth, plot = False):
 
     return patch
 
-def apply_patch(canvas, patch, xcoor, ycoor, plot = False, verbose = False):
+def apply_patch_fft(canvas, patch, xcoor, ycoor):
+
+    out_canvas = canvas.copy()
+
+    _patch = np.pad(patch, (1,1))
+
+def apply_patch(canvas, patch, xcoor, ycoor, shift_method = 'warpaffine', plot = False, verbose = False):
 
     '''
     Apply patch to the canvas centered at (xcoor, ycoor).
     Shifts the patch subpixel scale for subpixel accuracy.
-
-    # TODO WARNING: doesn't work on edges!! not meant to use for those cases
-    This is fixed !!
 
     '''
     import cv2
@@ -307,14 +340,22 @@ def apply_patch(canvas, patch, xcoor, ycoor, plot = False, verbose = False):
 
     dx = (xcoor - xp) - np.floor(xcoor - xp) #+ 0.5
     dy = (ycoor - yp) - np.floor(ycoor - yp) #+ 0.5
-    # print("shifting the image by dx, dy : %.3f, %.3f" % (dx, dy))
+    print("shifting the image by dx, dy : %.3f, %.3f" % (dx, dy))
+    print("actually shifting the image by dx, dy : %.3f, %.3f" % (dx+0.5, dy+0.5))
     # extend the patch for subpixel shifting
     extended_patch = (np.hstack([np.vstack([_patch, np.zeros(np.shape(_patch)[1])]), np.zeros((np.shape(_patch)[0]+1,1))]))
 
-    M = np.float32([[1,0,dx+0.5], [0,1,dy+0.5]])
-    shifted_patch = cv2.warpAffine(extended_patch, M, (extended_patch.shape[1], extended_patch.shape[0]))
+    # M = np.float32([[1,0,dx+0.5], [0,1,dy+0.5]])
+    # shifted_patch = cv2.warpAffine(extended_patch, M, (extended_patch.shape[1], extended_patch.shape[0]))
 
-
+    # shift the image
+    # if shift_method == 'warpaffine':
+    shifted_patch = shift_image_warpaffine(extended_patch, dx+0.5, dy+0.5)
+    # elif shift_method == 'fft':
+    #     shifted_patch = shift_image_fourier(extended_patch, dx+0.5, dy+0.5, oversample_factor = 2, npad = 10)
+    # else:
+    #     raise ValueError("shift_method should be either 'warpaffine' or 'fft'")
+        
     
     _ymin, _ymax, _xmin, _xmax = np.floor(ycoor - yp).astype(int), np.floor(ycoor - yp).astype(int)+height+1,np.floor(xcoor - xp).astype(int),np.floor(xcoor - xp).astype(int)+width+1
     

@@ -4,40 +4,11 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import os
 from scipy.interpolate import griddata, interp1d
-from PLred.imageutils import find_3point_peak, find_9point_peak_2d, iter_find_blob, apply_patch, find_centroid
+from PLred.imageutils import find_3point_peak, find_9point_peak_2d, iter_find_blob, apply_patch, find_centroid, shift_image_fourier, shift_image_warpaffine
 
 # need to store this information somewhere else, maybe in the config file
 # model_savedir = '/home/first/yjkim/visPL_tests/conf/models/'
 
-def shift_image_warpaffine(im, shift_x, shift_y):
-    ''' shift image using warpAffine '''
-    import cv2
-    # shift the image
-    M = np.float32([[1,0,shift_x], [0,1,shift_y]])
-    shifted = cv2.warpAffine(im, M, (im.shape[1], im.shape[0]))
-
-    return shifted
-
-def shift_image_fourier(im0, shift_x, shift_y, oversample_factor = 2, npad = 10):
-    ''' shift image using Fourier transform '''
-
-    from scipy.fft import fft2, ifft2, fftshift
-    from scipy.ndimage import zoom
-
-    im = zoom(im0, oversample_factor)
-    padded = np.pad(im, npad)
-
-    ny, nx = padded.shape
-    ky = np.fft.fftfreq(ny)
-    kx = np.fft.fftfreq(nx)
-    ky, kx = np.meshgrid(ky, kx)
-
-    fftim = fft2(padded)
-    phase_shift = np.exp(-2j*np.pi*(shift_y*ky + shift_x*kx))
-    shifted_fft = fftim * phase_shift
-    shifted_image = np.real(ifft2(shifted_fft))
-
-    return (zoom(shifted_image[npad:-npad, npad:-npad], 1/oversample_factor))
 
 
 def shift_spectrum(spectrum, shift):
@@ -611,8 +582,9 @@ class SpectrumModel:
                     axs[wavind].axhline(gridsize//2, color='white', alpha=0.5)
                     axs[wavind].axvline(gridsize//2, color='white', alpha=0.5)
                     axs[wavind].axis('off')
-                except:
+                except Exception as e:
                     print('fibind %d, wavind %d failed' % (fibind, wavind))
+                    print(e)
                     axs[wavind].axis('off')
                     self.lsf_failed_indices.append((fibind, wavind))
 
@@ -652,7 +624,7 @@ class SpectrumModel:
                             # use_center_of_mass = False,
                             # use_25point_peak = False,
                             # use_9point_peak = False,
-                            shift_method = 'fft',
+                            shift_method = 'warpaffine',
                             centroid_thres = 1):
         
         import cv2
@@ -752,7 +724,8 @@ class SpectrumModel:
     def get_LSF(self, fibind, xcoor, plot = False, plotwidth = 15, return_canvas = False,
                 use_griddata = False,
                 use_interp1d = True,
-                ycoor_correction = 0):
+                ycoor_correction = 0,
+                shift_method = 'fft'):
         
         ycoor = self.trace_funcs[fibind](xcoor) + ycoor_correction
 
@@ -763,14 +736,14 @@ class SpectrumModel:
             lsf = interp1d(self.lsf_xcoors[fibind], self.lsf_cutouts[fibind], axis=0)(xcoor)
 
         if plot:
-            applied_canvas = apply_patch(self.CANVAS, lsf, xcoor, ycoor)
+            applied_canvas = apply_patch(self.CANVAS, lsf, xcoor, ycoor, shift_method = shift_method)
             plt.imshow(applied_canvas)
             self.plot_traces()
             plt.xlim(xcoor - plotwidth, xcoor + plotwidth)
             plt.ylim(ycoor - plotwidth, ycoor + plotwidth)
 
         if return_canvas:
-            return apply_patch(self.CANVAS, lsf, xcoor, ycoor)
+            return apply_patch(self.CANVAS, lsf, xcoor, ycoor, shift_method = shift_method)
         
         else:
             return lsf
