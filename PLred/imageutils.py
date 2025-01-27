@@ -35,6 +35,24 @@ def shift_image_fourier(im0, shift_x, shift_y, oversample_factor = 2, npad = 10)
 
     return (zoom(shifted_image[npad:-npad, npad:-npad], 1/oversample_factor))
 
+def shift_image_fourier2(im0, shift_x, shift_y, oversample_factor = 2, npad = 10):
+    from scipy.fft import fft2, ifft2, fftshift
+    from scipy.ndimage import zoom, fourier_shift
+
+    im = zoom(im0, oversample_factor)
+    padded = np.pad(im, npad)
+
+    # nx, ny = padded.shape
+    # ky = np.fft.fftfreq(ny)
+    # kx = np.fft.fftfreq(nx)
+    # ky, kx = np.meshgrid(ky, kx)
+
+    # fftim = fft2(padded)
+    # phase_shift = np.exp(-2j*np.pi*(shift_y*ky + shift_x*kx))
+    # shifted_fft = fftim * phase_shift
+    shifted_image = np.real(ifft2(fourier_shift(fft2(padded), shift = (shift_y, shift_x))))
+
+    return (zoom(shifted_image[npad:-npad, npad:-npad], 1/oversample_factor))
 
 def parabolic_2d(coords, a, b, c, d, e, f):
     """2D parabolic function for fitting."""
