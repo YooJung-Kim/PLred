@@ -158,7 +158,7 @@ class PLMapFit:
         plot_maps(reshaped, titles = titles, vmin = -vmax, vmax= vmax, suptitle = 'Residuals',
                   cmap = 'RdBu')
     
-    def plot_1d(self, subsampled_fibind):
+    def plot_1d(self, subsampled_fibind, return_fig = False):
 
         n = self.mapmodel.map_n - 2 * self.n_trim
         reshaped = np.reshape(self.rc.data, shape = (-1, n**2))
@@ -173,7 +173,12 @@ class PLMapFit:
 
         chi2 = np.nanmean((reshaped[subsampled_fibind] - reshaped_vec[subsampled_fibind])**2/reshaped_err[subsampled_fibind]**2)
         plt.title(r'port %d ($\chi^2$ = %.3f)' % (self.subsampled_fiber_inds[subsampled_fibind], chi2))
+        
+        if return_fig:
+            return fig
+        
         plt.show()
+
 
     #     self.rc.plot_diagnostic()
 
