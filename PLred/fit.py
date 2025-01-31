@@ -161,18 +161,19 @@ class PLMapFit:
     def plot_1d(self, subsampled_fibind, return_fig = False):
 
         n = self.mapmodel.map_n - 2 * self.n_trim
-        reshaped = np.reshape(self.rc.data, shape = (-1, n**2))
-        reshaped_err = np.reshape(self.rc.data_err, shape = (-1, n**2))
-        reshaped_vec = np.reshape(self.rc.final_vec, shape = (-1, n**2))
+        reshaped = np.reshape(self.rc.data, newshape = (-1, n**2))
+        reshaped_err = np.reshape(self.rc.data_err, newshape = (-1, n**2))
+        reshaped_vec = np.reshape(self.rc.final_vec, newshape = (-1, n**2))
 
         fig = plt.figure(figsize=(10,5))
+        ax = fig.add_subplot(111)
 
-        plt.errorbar(np.arange(n**2), reshaped[subsampled_fibind], yerr = reshaped_err[subsampled_fibind], label = 'data', fmt='o-', color='black')
-        plt.plot(np.arange(n**2), reshaped_vec[subsampled_fibind], label = 'reconstructed', color='red')
-        plt.legend()
+        ax.errorbar(np.arange(n**2), reshaped[subsampled_fibind], yerr = reshaped_err[subsampled_fibind], label = 'data', fmt='o-', color='black')
+        ax.plot(np.arange(n**2), reshaped_vec[subsampled_fibind], label = 'reconstructed', color='red')
+        ax.legend()
 
         chi2 = np.nanmean((reshaped[subsampled_fibind] - reshaped_vec[subsampled_fibind])**2/reshaped_err[subsampled_fibind]**2)
-        plt.title(r'port %d ($\chi^2$ = %.3f)' % (self.subsampled_fiber_inds[subsampled_fibind], chi2))
+        ax.set_title(r'port %d ($\chi^2$ = %.3f)' % (self.subsampled_fiber_inds[subsampled_fibind], chi2))
         
         if return_fig:
             return fig
