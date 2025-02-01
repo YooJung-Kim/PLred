@@ -121,7 +121,7 @@ class BaseImageReconstructor:
             
             return False, self.current_ll
         
-    def set_initial_state(self):
+    def set_initial_state(self, central_frac = None):
 
         if self.ini_method == 'random':
             # random locations
@@ -132,6 +132,12 @@ class BaseImageReconstructor:
         elif self.ini_method == 'center':
             self.locs = np.array([self.centerloc] * self.n_element)
 
+        if central_frac is not None:
+            self.central_frac = central_frac
+            self.n_fixed = int((self.n_element * central_frac)/ (1 - central_frac))
+            print("Fixing %d elements to the center. %d elements are free to move" % (self.n_fixed, self.n_element))
+            self.locs = list(np.concatenate([self.locs, [self.centerloc]*self.n_fixed]))
+        
         # compute vector from locs
         self.current_vec = self.compute_model_from_locs(self.locs)
         
@@ -151,6 +157,41 @@ class BaseImageReconstructor:
             self.central_fracs = []
         else:
             self.current_central_frac = None
+    
+    # def set_initial_state_central_frac(self, central_frac):
+
+    #     if self.ini_method == 'random':
+    #         # random locations
+    #         element_xs = np.random.choice(self.axis_len, size = self.n_element)
+    #         element_ys = np.random.choice(self.axis_len, size = self.n_element)
+    #         self.locs = self.axis_len * element_xs + element_ys
+        
+    #     elif self.ini_method == 'center':
+    #         self.locs = np.array([self.centerloc] * self.n_element)
+
+    #     self.n_fixed = int((self.n_element * central_frac)/ (1 - central_frac))
+    #     print("Fixing %d elements to the center. %d elements are free to move" % (self.n_fixed, self.n_element))
+    #     self.locs = list(np.concatenate([self.locs, [self.centerloc]*self.n_fixed]))
+        
+    #     # compute vector from locs
+    #     self.current_vec = self.compute_model_from_locs(self.locs)
+        
+    #     # compute initial log likelihood
+    #     self.current_ll = self.compute_ll(self.current_vec)
+
+    #     # initial temperature
+    #     self.temp = self.ini_temp
+
+    #     self.lls = [self.current_ll]
+    #     self.temps = [self.temp]
+    #     self.post_locs = np.array([], dtype=int)
+    #     self.all_post_locs = np.array([], dtype=int)
+
+    #     # if self.model_central_frac:
+    #     #     self.current_central_frac = 0.5
+    #     #     self.central_fracs = []
+    #     # else:
+    #     #     self.current_central_frac = None
 
     
     def compute_model_from_locs(self, locs, normalize = True):
@@ -258,9 +299,41 @@ class BaseImageReconstructor:
         else:
             # logging.info(f"Move rejected in element {ni}")
             self.current_ll = self.current_ll
-        
+    
+    # def run_chain_with_central_frac(self, niter, central_frac, plot_every = 100):
 
-    def run_chain(self, niter, plot_every = 100):
+    #     self.niter = niter
+
+    #     self.set_initial_state_central_frac(central_frac)
+    #     self.central_frac = central_frac
+
+    #     for iter in tqdm(range(self.niter)):
+            
+    #         # attempt flux element move
+    #         for ni in range(self.n_element):
+
+    #             self.move_element(ni)
+                
+
+    #         # store the results
+    #         self.lls.append(self.current_ll)
+    #         self.temps.append(self.temp)
+    #         self.post_locs = np.concatenate((self.post_locs, self.locs))
+            
+    #         if iter > self.burn_in_iter:
+    #             self.all_post_locs = np.concatenate((self.all_post_locs, self.locs))
+
+    #         if iter % plot_every == 0:
+    #             self.plot_current_state()
+
+    #     # compute final recovered parameters
+    #     self.final_image = locs2image(self.all_post_locs, self.axis_len)
+    #     self.final_vec = (self.matrix @ self.final_image.flatten()) / len(self.all_post_locs)
+    #     self.plot_final_state(self.final_image)
+
+    #     print("Done")
+
+    def run_chain(self, niter, central_frac = None, plot_every = 100):
         '''
         Run the MCMC chain
         
@@ -269,7 +342,7 @@ class BaseImageReconstructor:
         '''
         self.niter = niter
 
-        self.set_initial_state()
+        self.set_initial_state(central_frac=central_frac)
 
         for iter in tqdm(range(self.niter)):
             
