@@ -108,7 +108,7 @@ class PLMapFit:
         self.n_elemenet = n_elemenet
         self.target_chi2 = target_chi2
 
-    def run(self, centerfrac = None, niter = 500, burn_in_iter=100, seed=12345, plot_every = 500,
+    def run(self, centerfrac = None, move_ratio = 1, niter = 500, burn_in_iter=100, seed=12345, plot_every = 500,
             prior_type = 'circle', **kwargs):
 
 
@@ -134,8 +134,8 @@ class PLMapFit:
         # else:
         #     self.rc.run_chain_with_central_frac(niter, centerfrac, plot_every = plot_every)
 
-        self.rc.run_chain(niter, central_frac=centerfrac, plot_every = plot_every)
-        
+        self.rc.run_chain(niter, move_ratio = move_ratio, central_frac=centerfrac, plot_every = plot_every)
+
         print("Final chi2", self.rc.current_ll*2)
         return self.rc
 

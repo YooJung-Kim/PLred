@@ -92,6 +92,7 @@ class BaseImageReconstructor:
 
         self.model_central_frac = model_central_frac
         self.ini_central_frac = ini_central_frac
+        self.n_fixed = 0
 
         self.outname = outname
 
@@ -280,25 +281,48 @@ class BaseImageReconstructor:
 
         fig.savefig(self.outname+'_final_state.png')
 
-    def move_element(self, ni):
+    def move_element(self, ni, move_scheme = 'random'):
         '''
         move the flux element ni
         '''
-        newloc = np.random.choice(self.axis_len**2)
-        delta_vec = (self.matrix[:,newloc] - self.matrix[:,self.locs[ni]]) / self.n_element
-        new_vec = self.current_vec + delta_vec
-        new_ll = self.compute_ll(new_vec)
-        prior_ratio = self.prior[newloc] / self.prior[self.locs[ni]]
-        move, new_ll = self.mh(new_ll, prior_ratio)
 
-        if move:
-            logging.debug(f"Move accepted in element {ni}")
-            self.locs[ni] = newloc
-            self.current_vec += delta_vec
-            self.current_ll = new_ll
+        if move_scheme == 'random':
+            newloc = np.random.choice(self.axis_len**2)
+            delta_vec = (self.matrix[:,newloc] - self.matrix[:,self.locs[ni]]) / (self.n_element + self.n_fixed)
+            new_vec = self.current_vec + delta_vec
+            new_ll = self.compute_ll(new_vec)
+            prior_ratio = self.prior[newloc] / self.prior[self.locs[ni]]
+            move, new_ll = self.mh(new_ll, prior_ratio)
+
+            if move:
+                logging.debug(f"Move_random accepted in element {ni}")
+                self.locs[ni] = newloc
+                self.current_vec += delta_vec
+                self.current_ll = new_ll
+            else:
+                # logging.info(f"Move rejected in element {ni}")
+                self.current_ll = self.current_ll
+        
+        elif move_scheme == 'center':
+            # move to center
+            newloc = self.centerloc
+            delta_vec = (self.matrix[:,newloc] - self.matrix[:,self.locs[ni]]) / (self.n_element + self.n_fixed)
+            new_vec = self.current_vec + delta_vec
+            new_ll = self.compute_ll(new_vec)
+            prior_ratio = self.prior[newloc] / self.prior[self.locs[ni]]
+            move, new_ll = self.mh(new_ll, prior_ratio)
+
+            if move:
+                logging.debug(f"Move_center accepted in element {ni}")
+                self.locs[ni] = newloc
+                self.current_vec += delta_vec
+                self.current_ll = new_ll
+            else:
+                # logging.info(f"Move rejected in element {ni}")
+                self.current_ll = self.current_ll
+        
         else:
-            # logging.info(f"Move rejected in element {ni}")
-            self.current_ll = self.current_ll
+            raise ValueError("move_scheme not recognized")
     
     # def run_chain_with_central_frac(self, niter, central_frac, plot_every = 100):
 
@@ -333,7 +357,8 @@ class BaseImageReconstructor:
 
     #     print("Done")
 
-    def run_chain(self, niter, central_frac = None, plot_every = 100):
+    def run_chain(self, niter, central_frac = None, plot_every = 100,
+                  move_ratio = 0.95):
         '''
         Run the MCMC chain
         
@@ -348,9 +373,11 @@ class BaseImageReconstructor:
             
             # attempt flux element move
             for ni in range(self.n_element):
-
-                self.move_element(ni)
                 
+                if np.random.rand() < move_ratio:
+                    self.move_element(ni, move_scheme='random')
+                else:
+                    self.move_element(ni, move_scheme='center')                
 
             # store the results
             self.lls.append(self.current_ll)
