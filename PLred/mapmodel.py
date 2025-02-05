@@ -284,11 +284,6 @@ class CouplingMapModel:
         return np.array(mat)
     
 
-# class PointCollection:
-
-#     def 
-
-
 
 
 class Ring:
@@ -375,8 +370,10 @@ class Ring:
         Plot the ellipse
         """
         points = np.array(self.get_points(vmin, vmax))
+        if len(points) == 0:
+            raise ValueError("No points to plot")
+        
         plt.figure()
-
         plt.scatter(points[:, 0], points[:, 1], c=points[:,2], s=points[:,3], cmap='viridis')
         plt.colorbar(label='velocity')
         plt.gca().set_aspect('equal', adjustable='box')
@@ -414,9 +411,12 @@ class PointCollection:
         plt.figure()
         all_points = np.array(self.get_all_points(vmin, vmax))
 
+        if len(all_points) == 0:
+            raise ValueError("No points to plot")
+
         if not density:
             plt.scatter(all_points[:, 0], all_points[:, 1], c=all_points[:,2],s=all_points[:,3], cmap='viridis')
-            plt.colorbar(label='Weight')
+            plt.colorbar(label='velocity')
         else:
             if grid_min is None: grid_min = np.min(all_points[:,:2])
             if grid_max is None: grid_max = np.max(all_points[:,:2])
@@ -429,3 +429,51 @@ class PointCollection:
             
         plt.gca().set_aspect('equal', adjustable='box')
         plt.show()
+
+    def _bin_by_velocity(self, vmin, vmax, num_bins):
+        """
+        Bin points by their velocities.
+
+        Parameters:
+        - vmin: minimum velocity
+        - vmax: maximum velocity
+        - num_bins: number of bins
+
+        Returns:
+        - List of lists of (x, y, v, w) tuples representing points in each bin
+        """
+        bins = np.linspace(vmin, vmax, num_bins + 1)
+        binned_points = [[] for _ in range(num_bins)]
+
+        for point in self.get_all_points(vmin, vmax):
+            for i in range(num_bins):
+                if bins[i] <= point[2] < bins[i + 1]:
+                    binned_points[i].append(point)
+                    break
+
+        return binned_points
+    
+    def get_spectrum(self, vmin = None, vmax = None, bins = 40):
+        
+        # TODO: intrinsic width of the spectrum needs to be considered, not implemented yet
+
+        if vmin == None: vmin = np.min(np.array(self.get_all_points())[:,2])
+        if vmax == None: vmax = np.max(np.array(self.get_all_points())[:,2])
+
+        binned_points = self._bin_by_velocity(vmin, vmax, bins)
+        out_spec = np.zeros(bins)
+        for i, bin in enumerate(binned_points):
+            out_spec[i] = np.sum(np.array(bin)[:,3])
+        return out_spec
+    
+    def get_centroid(self, vmin = None, vmax = None, bins = 40):
+
+        if vmin == None: vmin = np.min(np.array(self.get_all_points())[:,2])
+        if vmax == None: vmax = np.max(np.array(self.get_all_points())[:,2])
+
+        binned_points = self._bin_by_velocity(vmin, vmax, bins)
+        centroids = np.zeros((bins,2))
+        for i, bin in enumerate(binned_points):
+            centroids[i,0] = np.sum(np.array(bin)[:,3] * np.array(bin)[:,0])
+            centroids[i,1] = np.sum(np.array(bin)[:,3] * np.array(bin)[:,1])
+        return centroids
