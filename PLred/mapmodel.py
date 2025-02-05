@@ -284,89 +284,148 @@ class CouplingMapModel:
         return np.array(mat)
     
 
+# class PointCollection:
+
+#     def 
+
+
+
+
+class Ring:
+    def __init__(self, radius, vrot, num_points, position_angle=0,
+                 incl_angle = 0, center = (0,0), weight_array = None
+                 ):
+        """
+        Parameters:
+        - radius: radius of the ring
+        - vrot: rotation velocity of the ring
+        - num_points: number of points to approximate the ellipse
+        - position_angle: position angle of the ellipse in radians
+        - incl_angle: inclination angle of the ellipse in radians
+        - center: tuple of (x, y) coordinates for the center of the ellipse
+        - weight_array: optional array of weights for each point
+        """
+
+        self.num_points = num_points
+        self.theta = self._generate_azimuthal_grid()
+        self.center = center
+        self.radius = radius
+        self.vrot = vrot
+        self.angle = position_angle
+        self.incl_angle = incl_angle
+        self.points = self._generate_points(weight_array=weight_array)
+
+
+    def _generate_azimuthal_grid(self):
+        """
+        Generate azimuthal grid points
+
+        Returns:
+        - List of azimuthal angles
+        """
+        return np.linspace(0, 2 * np.pi, self.num_points)
+    
+    def _generate_points(self, weight_array = None):
+        """
+        Generate points
+
+        Returns:
+        - List of (x, y) tuples representing points on the ellipse
+        """
+       
+        x = self.radius * np.cos(self.theta)
+        y = self.radius * np.sin(self.theta)
+
+        mat = np.array([[np.cos(self.angle) * np.cos(self.incl_angle), np.sin(self.angle) * np.cos(self.incl_angle)], 
+                    [-np.sin(self.angle), np.cos(self.angle)]]) / np.cos(self.incl_angle)
+        [x_rot, y_rot] = (np.linalg.inv(mat) @ (np.array([x,y]))) 
         
+        x_final = self.center[0] + x_rot
+        y_final = self.center[1] + y_rot
 
-
-    # def make_interpolation_model(self, wav_fitrange, wav_reconrange, 
-    #                              poly_deg_spatial = 9, poly_deg_spectral = 9,
-    #                              weighted = True):
-    #     '''
-    #     Make an interpolation model
-    #     '''
+        vels = self.vrot * np.sin(self.incl_angle) * (np.cos(self.angle) * x_rot + np.sin(self.angle) * y_rot) / self.radius
         
-    #     # all_recon_data, all_map_input, all_coeffs = [], [], []
+        if weight_array is None:
+            weights = np.ones(self.num_points)
+        else:
+            weights = weight_array
+            assert len(weights) == self.num_points, "Length of weight array must match number of points"
 
-    #     x_grid, y_grid = np.meshgrid(self.pos_mas, self.pos_mas)
+        return list(zip(x_final, y_final, vels, weights))
 
-    #     x_flat = x_grid.ravel()
-    #     y_flat = y_grid.ravel()
+    def get_points(self, vmin=None, vmax = None):
+        """
+        Get the points
 
+        Returns:
+        - List of (x, y, v) tuples representing points on the ellipse
+        """
+        if ((vmin == None) and (vmax == None)):
+            return self.points
         
-    #     X_poly = poly_design_matrix(x_flat, y_flat, poly_deg_spatial)
-        
-    #     all_map_inputs = np.zeros((NFIB, len(wav_reconrange), len(self.pos_mas), len(self.pos_mas)))
-    #     all_modeled_coeffs = np.zeros((NFIB, len(wav_reconrange), X_poly.shape[1]))
-    #     all_modeled_recons = np.zeros((NFIB, len(wav_reconrange), len(self.pos_mas), len(self.pos_mas)))
-
-    #     for fibind in tqdm(range(NFIB)):
-
-    #         all_recon_data, all_map_input, all_coeffs = [], [], []
-
-    #         for specind0, specind in enumerate(wav_reconrange):
-
-    #             map_data = self.normdata[:,:,fibind,specind] # cube[:,:,specind] / np.nansum(cube[:,:,specind])
-    #             weight = 1/self.normvar[:,:,fibind,specind]
-    #             idx = ~np.isfinite(map_data)
-    #             map_data[idx] = 0
-    #             weight[idx] = 0
-
-    #             reshaped_data = map_data.ravel()
-                
-    #             if weighted:
-    #                 reshaped_weights = weight.ravel() 
-    #             else:
-    #                 reshaped_weights = np.ones_like(reshaped_data)
+        else:
+            if vmin is None: vmin = -np.inf
+            if vmax is None: vmax = np.inf
+            return [p for p in self.points if (p[2] >= vmin) and (p[2] <= vmax)]
 
 
-    #             X_poly_weighted = X_poly * np.sqrt(reshaped_weights[:,np.newaxis])
-    #             b_weighted = reshaped_data * np.sqrt(reshaped_weights)
 
-    #             coeffs, _, _, _ = lstsq(X_poly_weighted, b_weighted)
-                
-    #             recon = np.dot(X_poly, coeffs)
+    def plot(self, vmin = None, vmax = None):
+        """
+        Plot the ellipse
+        """
+        points = np.array(self.get_points(vmin, vmax))
+        plt.figure()
 
-    #             # reshape to match the cube
-    #             recon = recon.reshape((len(self.pos_mas), len(self.pos_mas)))
-    #             map_input = reshaped_data.reshape((len(self.pos_mas), len(self.pos_mas)))
-
-    #             all_recon_data.append(recon)
-    #             all_map_input.append(map_input)
-
-    #             all_coeffs.append(coeffs)
-
-    #         all_coeffs = np.array(all_coeffs)
-    #         modeled_coeffs = np.zeros_like(all_coeffs)
-
-    #         for coeff_ind in range(np.shape(all_coeffs)[1]):
-
-    #             poly = np.polyfit(wav_fitrange, all_coeffs[wav_fitrange,coeff_ind], deg = poly_deg_spectral)
-    #             modeled_coeff = np.poly1d(poly)(wav_reconrange)
-    #             modeled_coeffs[:,coeff_ind] = modeled_coeff
-
-    #         modeled_recon = []
-    #         for specind in (wav_reconrange):
-    #             recon = np.dot(X_poly, modeled_coeffs[specind])
-    #             modeled_recon.append(recon.reshape((len(self.pos_mas), len(self.pos_mas))))
-
-    #         modeled_recon = np.array(modeled_recon)
+        plt.scatter(points[:, 0], points[:, 1], c=points[:,2], s=points[:,3], cmap='viridis')
+        plt.colorbar(label='velocity')
+        plt.gca().set_aspect('equal', adjustable='box')
+        plt.show()
 
 
-    #         all_modeled_recons[fibind, specind0] = modeled_recon
-    #         all_map_inputs[fibind, specind0] = map_input
-    #         all_modeled_coeffs[fibind, specind0] = modeled_coeffs
 
-    #     self.all_modeled_recons = all_modeled_recons
-    #     self.all_map_inputs = all_map_inputs
-    #     self.all_modeled_coeffs = all_modeled_coeffs
+class PointCollection:
+    def __init__(self):
 
-    #     self.save_model()
+        self.shapes = []
+
+    def add_shape(self, shape):
+        """
+        Add a shape to the collection.
+        """
+        self.shapes.append(shape)
+
+    def get_all_points(self, vmin=None, vmax = None):
+        """
+        Get all points from all ellipses in the collection.
+
+        Returns:
+        - List of (x, y) tuples representing points from all ellipses
+        """
+        all_points = []
+        for s in self.shapes:
+            all_points.extend(s.get_points(vmin, vmax))
+        return all_points
+
+    def plot(self, vmin = None, vmax = None, density = False, bins = 40, grid_min=None, grid_max=None):
+        """
+        Plot all points in the collection.
+        """
+        plt.figure()
+        all_points = np.array(self.get_all_points(vmin, vmax))
+
+        if not density:
+            plt.scatter(all_points[:, 0], all_points[:, 1], c=all_points[:,2],s=all_points[:,3], cmap='viridis')
+            plt.colorbar(label='Weight')
+        else:
+            if grid_min is None: grid_min = np.min(all_points[:,:2])
+            if grid_max is None: grid_max = np.max(all_points[:,:2])
+            density, xedges, yedges = np.histogram2d(all_points[:,0], all_points[:,1], bins=bins, weights=all_points[:,3],
+                                         range = [[grid_min, grid_max], [grid_min, grid_max]])
+            
+            plt.imshow(density.T, origin='lower', 
+                    extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]],
+                    aspect='auto', interpolation='nearest')
+            
+        plt.gca().set_aspect('equal', adjustable='box')
+        plt.show()
