@@ -249,6 +249,14 @@ class CouplingMapModel:
         self.image_mas = np.linspace(-image_fov/2, image_fov/2, image_ngrid)
         self.image_xg, self.image_yg = np.meshgrid(self.image_mas, self.image_mas)
         self.n_trim = n_trim
+    
+    def compute_vec(self, specind, fibind, xshift, yshift):
+        '''
+        compute the vector for a given shift
+        '''
+        X_poly_shifted = poly_design_matrix(self.x_flat + xshift, self.y_flat + yshift, self.model_header['NPOLY1'])
+        recon_shifted = np.dot(X_poly_shifted, self.model_coeffs[fibind,specind])
+        return recon_shifted
 
     def make_matrix(self, specind, fiber_inds):
         '''
@@ -262,10 +270,8 @@ class CouplingMapModel:
 
             _mat = []
             for fibind in (fiber_inds):
-                
 
-                X_poly_shifted = poly_design_matrix(self.x_flat + x_shift, self.y_flat + y_shift, self.model_header['NPOLY1'])
-                recon_shifted = np.dot(X_poly_shifted, self.model_coeffs[fibind,specind])
+                recon_shifted = self.compute_vec(specind, fibind, x_shift, y_shift)
                 
                 if self.n_trim > 0:
                     trimmed = recon_shifted.reshape((self.map_n,self.map_n))[self.n_trim:-self.n_trim, self.n_trim:-self.n_trim].flatten()
@@ -276,6 +282,8 @@ class CouplingMapModel:
             mat.append(np.array(_mat).ravel())
         
         return np.array(mat)
+    
+
         
 
 
