@@ -115,7 +115,6 @@ class CouplingMapModel:
             self.datavar = self.map_fits[3].data
             self.datanormvar = self.map_fits[4].data
             self.pos_mas = np.linspace(self.map_header['XMIN'], self.map_header['XMAX'], self.map_header['MAP_N'])
-            self.nfib = self.normdata.shape[2]
             self.map_n = self.map_header['MAP_N']
 
             print("masking data with less than {} frames".format(min_nframes))
@@ -126,6 +125,7 @@ class CouplingMapModel:
             self.datanormvar[~idx] = np.nan
 
             self.normdata = self.data / np.nansum(self.data, axis=(0,1))[None,None]
+            self.nfib = self.normdata.shape[2]
         
         if model is not None:
             print("loading model")
