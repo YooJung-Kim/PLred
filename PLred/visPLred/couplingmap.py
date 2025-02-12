@@ -7,6 +7,7 @@ from astropy.io import fits
 from .utils import find_data_between
 from ..imageutils import subpixel_centroid_2d
 from .parameters import *
+from scipy.ndimage import center_of_mass
 
 def bin_by_centroids(psfcamframes, firstcamframes, centroids, xbins, ybins):
     '''
@@ -193,7 +194,7 @@ class SimultaneousData:
         self.psfcam_frames = psfcam_frames
         self.timestamps = np.array(psfcam_timestamp['timestamps'])[idx2]
 
-    def compute_psfcam_centroids(self):
+    def compute_psfcam_centroids(self, peak = True):
 
         '''
         Compute the centroids of the psfcam frames
@@ -202,7 +203,12 @@ class SimultaneousData:
         centroids = []
         for t in range(len(self.psfcam_frames)):
             try:
-                cent = subpixel_centroid_2d(self.psfcam_frames[t])
+
+                if peak:
+                    cent = subpixel_centroid_2d(self.psfcam_frames[t])
+                
+                else:
+                    cent = center_of_mass(self.psfcam_frames[t])
             except:
                 cent = (np.nan, np.nan)
                 

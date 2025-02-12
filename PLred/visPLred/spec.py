@@ -347,13 +347,31 @@ class SpectrumModel:
         self.ini_ys = np.zeros((self.NFIB, self.NWAV)).astype(int)
         self.ini_xs = np.array([self.INI_X_NEON] * self.NFIB).astype(int)
 
+        thres0 = thres
+
         # find peaks going through each wavelength
         for i in range(self.NWAV):
 
             sliced_im = self.neon[:,self.INI_X_NEON[i] - window: self.INI_X_NEON[i] + window]
 
             if use_peakutils:
-                inds = peakutils.indexes(np.sum(sliced_im, axis=1), thres = thres, min_dist = min_dist)
+                
+                inds = peakutils.indexes(np.sum(sliced_im, axis=1), thres = thres0, min_dist = min_dist)
+                ntries = 0
+                thres = thres0
+
+                while len(inds) != self.NFIB:
+                    if len(inds) > self.NFIB:
+                        thres *= 1.1
+                    else:
+                        thres *= 0.9
+                    
+                    print("for wavelength ind %d, the number of detected peaks is %d instead of %d. adjusting thres to %.4f" % (i, len(inds), self.NFIB, thres))
+                    inds = peakutils.indexes(np.sum(sliced_im, axis=1), thres = thres, min_dist = min_dist)
+                    ntries += 1
+
+                    if ntries > 100:
+                        raise Exception("peakutils failed to find the peaks.")
             else:
                 inds = find_multiple_peaks(np.sum(sliced_im, axis=1), n_peaks = self.NFIB, min_dist = min_dist)
 
