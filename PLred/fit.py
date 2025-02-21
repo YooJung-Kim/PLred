@@ -9,6 +9,8 @@ from .mapmodel import CouplingMapModel
 
 class PLMapFit:
 
+    # Image reconstruction class
+
     def __init__(self, matrix_file = None, model_file = None, image_ngrid = None, image_fov = None, n_trim = None):
 
         if matrix_file is not None:
@@ -109,7 +111,8 @@ class PLMapFit:
         self.target_chi2 = target_chi2
 
     def run(self, centerfrac = None, move_ratio = 1, niter = 500, burn_in_iter=100, seed=12345, plot_every = 500,
-            prior_type = 'circle', **kwargs):
+            prior_type = 'circle', ini_method = 'random', 
+            small_to_random_ratio = 0, **kwargs):
 
 
 
@@ -122,7 +125,7 @@ class PLMapFit:
                                                 seed = seed,
                                                 n_element= self.n_elemenet,
                                                 target_chi2= self.target_chi2,
-                                                ini_method = 'random'
+                                                ini_method = ini_method
                                             
                                                 )
 
@@ -134,36 +137,46 @@ class PLMapFit:
         # else:
         #     self.rc.run_chain_with_central_frac(niter, centerfrac, plot_every = plot_every)
 
-        self.rc.run_chain(niter, move_ratio = move_ratio, central_frac=centerfrac, plot_every = plot_every)
+        self.rc.run_chain(niter, move_ratio = move_ratio, central_frac=centerfrac, plot_every = plot_every,
+                          small_to_random_ratio= small_to_random_ratio)
 
         print("Final chi2", self.rc.current_ll*2)
         return self.rc
 
     
-    def plot_data(self, vmax=0.02):
+    def plot_data(self, vmax=0.02, return_fig = False): 
 
         n = self.mapmodel.map_n - 2 * self.n_trim
-        reshaped = np.reshape(self.rc.data, shape = (-1, n, n))
+        reshaped = np.reshape(self.rc.data, newshape = (-1, n, n))
         titles = ['port %d' % i for i in self.subsampled_fiber_inds]
 
-        plot_maps(reshaped, titles = titles, vmin = 0, vmax= vmax, suptitle= 'Data')
+        fig = plot_maps(reshaped, titles = titles, vmin = 0, vmax= vmax, suptitle= 'Data',
+                  return_fig = return_fig)
+        if return_fig: return fig
     
-    def plot_model(self, vmax=0.02):
+    def plot_model(self, vmax=0.02, return_fig = False):
 
         n = self.mapmodel.map_n - 2 * self.n_trim
-        reshaped = np.reshape(self.rc.final_vec, shape = (-1, n, n))
+        reshaped = np.reshape(self.rc.final_vec, newshape = (-1, n, n))
         titles = ['port %d' % i for i in self.subsampled_fiber_inds]
 
-        plot_maps(reshaped, titles = titles, vmin = 0, vmax= vmax, suptitle = 'Model')
+        fig = plot_maps(reshaped, titles = titles, vmin = 0, vmax= vmax, suptitle = 'Model',
+                  return_fig = return_fig)
+        if return_fig: return fig
 
-    def plot_residuals(self, vmax=0.002):
+    def plot_residuals(self, vmax=0.002, return_fig = False, SN = False):
 
         n = self.mapmodel.map_n - 2 * self.n_trim
-        reshaped = np.reshape((self.rc.data - self.rc.final_vec), shape = (-1, n, n))
+        if SN:
+            reshaped = np.reshape((self.rc.data - self.rc.final_vec)/self.rc.data_err, newshape = (-1, n, n))
+        else:
+            reshaped = np.reshape((self.rc.data - self.rc.final_vec), newshape = (-1, n, n))
         titles = ['port %d' % i for i in self.subsampled_fiber_inds]
 
-        plot_maps(reshaped, titles = titles, vmin = -vmax, vmax= vmax, suptitle = 'Residuals',
-                  cmap = 'RdBu')
+        fig = plot_maps(reshaped, titles = titles, vmin = -vmax, vmax= vmax, suptitle = 'Residuals',
+                  cmap = 'RdBu',
+                  return_fig = return_fig)
+        if return_fig: return fig
     
     def plot_1d(self, subsampled_fibind, return_fig = False):
 
@@ -193,7 +206,7 @@ class PLMapFit:
 
 
 def plot_maps(maps, titles=None, texts=None, origin='upper', vmin=None, vmax=None,
-              cmap = 'viridis', suptitle=None):
+              cmap = 'viridis', suptitle=None, return_fig = False):
 
     n_maps = len(maps)
     ncols = min(5, n_maps)
@@ -218,4 +231,15 @@ def plot_maps(maps, titles=None, texts=None, origin='upper', vmin=None, vmax=Non
     plt.tight_layout()
     if suptitle is not None:
         plt.suptitle(suptitle, fontsize=16)
-    plt.show()
+
+    if return_fig:
+        return fig
+    else:
+        plt.show()
+
+
+# class PLMapFitShape:
+    
+#     def __init__(self, n_trim = 0):
+
+
