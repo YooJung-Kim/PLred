@@ -181,3 +181,4 @@ PLred/examples/example_model_couplingmap/*fits
 PLred/examples/example_image_reconstruction/results/
 PLred/examples/example_image_reconstruction/matrices/
 PLred/examples/example_image_reconstruction/*
+PLred/examples/example_image_modeling/*
