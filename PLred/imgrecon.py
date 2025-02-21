@@ -116,7 +116,10 @@ class BaseImageReconstructor:
         
         if prob_move >= np.random.rand():
             # update temperature
-            self.temp += 1/self.tau * (new_ll - self.gamma * self.temp) * (1 - self.target_chi2 / new_ll)    
+            current_chi2 = self.current_ll * 2
+            self.temp += 1/self.tau * (current_chi2 - self.gamma * self.temp) * (1 - self.target_chi2 / current_chi2)    
+            # if self.temp < 1:
+            #     self.temp = 1
             return True, new_ll
         else:
             
@@ -303,6 +306,31 @@ class BaseImageReconstructor:
                 # logging.info(f"Move rejected in element {ni}")
                 self.current_ll = self.current_ll
         
+        elif move_scheme == 'smallstep':
+            # move to adjacent pixel
+            valid_move = False
+            while not valid_move:
+                which_axis = np.random.choice([0,1])
+                if which_axis == 0:
+                    newloc = self.locs[ni] + np.random.choice([-1, 1])
+                else:
+                    newloc = self.locs[ni] + np.random.choice([-1, 1]) * self.axis_len
+                if 0 <= newloc < self.axis_len**2:
+                    valid_move = True
+            delta_vec = (self.matrix[:,newloc] - self.matrix[:,self.locs[ni]]) / (self.n_element + self.n_fixed)
+            new_vec = self.current_vec + delta_vec
+            new_ll = self.compute_ll(new_vec)
+            prior_ratio = self.prior[newloc] / self.prior[self.locs[ni]]
+            move, new_ll = self.mh(new_ll, prior_ratio)
+            if move:
+                logging.debug(f"Move_smallstep accepted in element {ni}")
+                self.locs[ni] = newloc
+                self.current_vec += delta_vec
+                self.current_ll = new_ll
+            else:
+                # logging.info(f"Move rejected in element {ni}")
+                self.current_ll = self.current_ll
+        
         elif move_scheme == 'center':
             # move to center
             newloc = self.centerloc
@@ -358,7 +386,8 @@ class BaseImageReconstructor:
     #     print("Done")
 
     def run_chain(self, niter, central_frac = None, plot_every = 100,
-                  move_ratio = 0.95):
+                  move_ratio = 0.95,
+                  small_to_random_ratio = 0):
         '''
         Run the MCMC chain
         
@@ -375,7 +404,10 @@ class BaseImageReconstructor:
             for ni in range(self.n_element):
                 
                 if np.random.rand() < move_ratio:
-                    self.move_element(ni, move_scheme='random')
+                    if np.random.rand() < small_to_random_ratio:
+                        self.move_element(ni, move_scheme='smallstep')
+                    else:
+                        self.move_element(ni, move_scheme='random')
                 else:
                     self.move_element(ni, move_scheme='center')                
 
