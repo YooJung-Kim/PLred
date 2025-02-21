@@ -4,6 +4,224 @@ from astropy.io import fits
 from scipy.linalg import lstsq
 from tqdm import tqdm
 
+
+
+
+class Ring:
+    def __init__(self, radius, vrot, num_points, position_angle=0,
+                 incl_angle = 0, center = (0,0), weight_array = None
+                 ):
+        """
+        Parameters:
+        - radius: radius of the ring
+        - vrot: rotation velocity of the ring
+        - num_points: number of points to approximate the ellipse
+        - position_angle: position angle of the ellipse in radians
+        - incl_angle: inclination angle of the ellipse in radians
+        - center: tuple of (x, y) coordinates for the center of the ellipse
+        - weight_array: optional array of weights for each point
+        """
+
+        self.num_points = num_points
+        self.theta = self._generate_azimuthal_grid()
+        self.center = center
+        self.radius = radius
+        self.vrot = vrot
+        self.angle = position_angle
+        self.incl_angle = incl_angle
+        self.points = self._generate_points(weight_array=weight_array)
+
+
+    def _generate_azimuthal_grid(self):
+        """
+        Generate azimuthal grid points
+
+        Returns:
+        - List of azimuthal angles
+        """
+        return np.linspace(0, 2 * np.pi, self.num_points)
+    
+    def _generate_points(self, weight_array = None):
+        """
+        Generate points
+
+        Returns:
+        - List of (x, y) tuples representing points on the ellipse
+        """
+       
+        x = self.radius * np.cos(self.theta)
+        y = self.radius * np.sin(self.theta)
+
+        mat = np.array([[np.cos(self.angle) * np.cos(self.incl_angle), np.sin(self.angle) * np.cos(self.incl_angle)], 
+                    [-np.sin(self.angle), np.cos(self.angle)]]) / np.cos(self.incl_angle)
+        [x_rot, y_rot] = (np.linalg.inv(mat) @ (np.array([x,y]))) 
+        
+        x_final = self.center[0] + x_rot
+        y_final = self.center[1] + y_rot
+
+        vels = self.vrot * np.sin(self.incl_angle) * (np.cos(self.angle) * x_rot + np.sin(self.angle) * y_rot) / self.radius
+        
+        if weight_array is None:
+            weights = np.ones(self.num_points)
+        else:
+            weights = weight_array
+            assert len(weights) == self.num_points, "Length of weight array must match number of points"
+
+        return list(zip(x_final, y_final, vels, weights))
+
+    def get_points(self, vmin=None, vmax = None):
+        """
+        Get the points
+
+        Returns:
+        - List of (x, y, v) tuples representing points on the ellipse
+        """
+        if ((vmin == None) and (vmax == None)):
+            return self.points
+        
+        else:
+            if vmin is None: vmin = -np.inf
+            if vmax is None: vmax = np.inf
+            return [p for p in self.points if (p[2] >= vmin) and (p[2] <= vmax)]
+
+
+
+    def plot(self, vmin = None, vmax = None):
+        """
+        Plot the ellipse
+        """
+        points = np.array(self.get_points(vmin, vmax))
+        if len(points) == 0:
+            raise ValueError("No points to plot")
+        
+        plt.figure()
+        plt.scatter(points[:, 0], points[:, 1], c=points[:,2], s=points[:,3], cmap='viridis')
+        plt.colorbar(label='velocity')
+        plt.gca().set_aspect('equal', adjustable='box')
+        plt.show()
+
+
+
+class PointCollection:
+    def __init__(self):
+
+        self.shapes = []
+
+    def add_shape(self, shape):
+        """
+        Add a shape to the collection.
+        """
+        self.shapes.append(shape)
+
+    def get_all_points(self, vmin=None, vmax = None):
+        """
+        Get all points from all ellipses in the collection.
+
+        Returns:
+        - List of (x, y) tuples representing points from all ellipses
+        """
+        all_points = []
+        for s in self.shapes:
+            all_points.extend(s.get_points(vmin, vmax))
+        return all_points
+    
+    def get_density(self, vmin = None, vmax = None, bins = 40, grid_min=None, grid_max=None):
+        """
+        Get the density of points in the collection.
+        """
+        all_points = np.array(self.get_all_points(vmin, vmax))
+
+        if len(all_points) == 0:
+            raise ValueError("No points to plot")
+
+        if grid_min is None: grid_min = np.min(all_points[:,:2])
+        if grid_max is None: grid_max = np.max(all_points[:,:2])
+        den, xedges, yedges = np.histogram2d(all_points[:,0], all_points[:,1], bins=bins, weights=all_points[:,3],
+                                         range = [[grid_min, grid_max], [grid_min, grid_max]])
+        
+        return den.T, xedges, yedges
+
+    def plot(self, vmin = None, vmax = None, density = False, bins = 40, grid_min=None, grid_max=None):
+        """
+        Plot all points in the collection.
+        """
+        plt.figure()
+        all_points = np.array(self.get_all_points(vmin, vmax))
+
+        if len(all_points) == 0:
+            raise ValueError("No points to plot")
+
+        if not density:
+            plt.scatter(all_points[:, 0], all_points[:, 1], c=all_points[:,2],s=all_points[:,3], cmap='viridis')
+            plt.colorbar(label='velocity')
+        else:
+            den, xedges, yedges = self.get_density(vmin, vmax, bins, grid_min, grid_max)
+            
+            plt.imshow(den, origin='lower', 
+                    extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]],
+                    aspect='auto', interpolation='nearest')
+            
+        plt.gca().set_aspect('equal', adjustable='box')
+        plt.show()
+
+        if density: return den
+
+    def _bin_by_velocity(self, vmin, vmax, num_bins):
+        """
+        Bin points by their velocities.
+
+        Parameters:
+        - vmin: minimum velocity
+        - vmax: maximum velocity
+        - num_bins: number of bins
+
+        Returns:
+        - List of lists of (x, y, v, w) tuples representing points in each bin
+        """
+        bins = np.linspace(vmin, vmax, num_bins + 1)
+        binned_points = [[] for _ in range(num_bins)]
+
+        for point in self.get_all_points(vmin, vmax):
+            for i in range(num_bins):
+                if bins[i] <= point[2] < bins[i + 1]:
+                    binned_points[i].append(point)
+                    break
+
+        return binned_points
+    
+    def get_spectrum(self, vmin = None, vmax = None, bins = 40):
+
+        # TODO: intrinsic width of the spectrum needs to be considered, not implemented yet
+
+        if vmin == None: vmin = np.min(np.array(self.get_all_points())[:,2])
+        if vmax == None: vmax = np.max(np.array(self.get_all_points())[:,2])
+
+        binned_points = self._bin_by_velocity(vmin, vmax, bins)
+        out_spec = np.zeros(bins)
+        for i, bin in enumerate(binned_points):
+            if len(bin) == 0:
+                out_spec[i] = 0
+            else:
+                out_spec[i] = np.sum(np.array(bin)[:,3])
+        return out_spec
+    
+    def get_centroid(self, vmin = None, vmax = None, bins = 40):
+
+        if vmin == None: vmin = np.min(np.array(self.get_all_points())[:,2])
+        if vmax == None: vmax = np.max(np.array(self.get_all_points())[:,2])
+
+        binned_points = self._bin_by_velocity(vmin, vmax, bins)
+        centroids = np.zeros((bins,2))
+        for i, bin in enumerate(binned_points):
+            if len(bin) == 0:
+                centroids[i] = np.nan
+            else:
+                centroids[i,0] = np.sum(np.array(bin)[:,3] * np.array(bin)[:,0])
+                centroids[i,1] = np.sum(np.array(bin)[:,3] * np.array(bin)[:,1])
+        return centroids
+
+
+
 # NFIB = 38 # this should be replaced
 
 def poly_design_matrix(x, y, degree):
@@ -258,7 +476,7 @@ class CouplingMapModel:
         recon_shifted = np.dot(X_poly_shifted, self.model_coeffs[fibind,specind])
 
         if n_trim > 0:
-            trimmed = recon_shifted.reshape((self.map_n,self.map_n))[self.n_trim:-self.n_trim, self.n_trim:-self.n_trim].flatten()
+            trimmed = recon_shifted.reshape((self.map_n,self.map_n))[n_trim:-n_trim, n_trim:-n_trim].flatten()
         else:
             trimmed = recon_shifted
         return trimmed
@@ -283,197 +501,22 @@ class CouplingMapModel:
         
         return np.array(mat)
     
+    def compute_map_from_points(self, specind, fiber_inds, p:PointCollection, vmin = None, vmax = None, n_trim=0):
 
-
-
-class Ring:
-    def __init__(self, radius, vrot, num_points, position_angle=0,
-                 incl_angle = 0, center = (0,0), weight_array = None
-                 ):
-        """
-        Parameters:
-        - radius: radius of the ring
-        - vrot: rotation velocity of the ring
-        - num_points: number of points to approximate the ellipse
-        - position_angle: position angle of the ellipse in radians
-        - incl_angle: inclination angle of the ellipse in radians
-        - center: tuple of (x, y) coordinates for the center of the ellipse
-        - weight_array: optional array of weights for each point
-        """
-
-        self.num_points = num_points
-        self.theta = self._generate_azimuthal_grid()
-        self.center = center
-        self.radius = radius
-        self.vrot = vrot
-        self.angle = position_angle
-        self.incl_angle = incl_angle
-        self.points = self._generate_points(weight_array=weight_array)
-
-
-    def _generate_azimuthal_grid(self):
-        """
-        Generate azimuthal grid points
-
-        Returns:
-        - List of azimuthal angles
-        """
-        return np.linspace(0, 2 * np.pi, self.num_points)
-    
-    def _generate_points(self, weight_array = None):
-        """
-        Generate points
-
-        Returns:
-        - List of (x, y) tuples representing points on the ellipse
-        """
-       
-        x = self.radius * np.cos(self.theta)
-        y = self.radius * np.sin(self.theta)
-
-        mat = np.array([[np.cos(self.angle) * np.cos(self.incl_angle), np.sin(self.angle) * np.cos(self.incl_angle)], 
-                    [-np.sin(self.angle), np.cos(self.angle)]]) / np.cos(self.incl_angle)
-        [x_rot, y_rot] = (np.linalg.inv(mat) @ (np.array([x,y]))) 
+        all_points = np.array(p.get_all_points(vmin, vmax))
         
-        x_final = self.center[0] + x_rot
-        y_final = self.center[1] + y_rot
-
-        vels = self.vrot * np.sin(self.incl_angle) * (np.cos(self.angle) * x_rot + np.sin(self.angle) * y_rot) / self.radius
-        
-        if weight_array is None:
-            weights = np.ones(self.num_points)
-        else:
-            weights = weight_array
-            assert len(weights) == self.num_points, "Length of weight array must match number of points"
-
-        return list(zip(x_final, y_final, vels, weights))
-
-    def get_points(self, vmin=None, vmax = None):
-        """
-        Get the points
-
-        Returns:
-        - List of (x, y, v) tuples representing points on the ellipse
-        """
-        if ((vmin == None) and (vmax == None)):
-            return self.points
-        
-        else:
-            if vmin is None: vmin = -np.inf
-            if vmax is None: vmax = np.inf
-            return [p for p in self.points if (p[2] >= vmin) and (p[2] <= vmax)]
-
-
-
-    def plot(self, vmin = None, vmax = None):
-        """
-        Plot the ellipse
-        """
-        points = np.array(self.get_points(vmin, vmax))
-        if len(points) == 0:
-            raise ValueError("No points to plot")
-        
-        plt.figure()
-        plt.scatter(points[:, 0], points[:, 1], c=points[:,2], s=points[:,3], cmap='viridis')
-        plt.colorbar(label='velocity')
-        plt.gca().set_aspect('equal', adjustable='box')
-        plt.show()
-
-
-
-class PointCollection:
-    def __init__(self):
-
-        self.shapes = []
-
-    def add_shape(self, shape):
-        """
-        Add a shape to the collection.
-        """
-        self.shapes.append(shape)
-
-    def get_all_points(self, vmin=None, vmax = None):
-        """
-        Get all points from all ellipses in the collection.
-
-        Returns:
-        - List of (x, y) tuples representing points from all ellipses
-        """
-        all_points = []
-        for s in self.shapes:
-            all_points.extend(s.get_points(vmin, vmax))
-        return all_points
-
-    def plot(self, vmin = None, vmax = None, density = False, bins = 40, grid_min=None, grid_max=None):
-        """
-        Plot all points in the collection.
-        """
-        plt.figure()
-        all_points = np.array(self.get_all_points(vmin, vmax))
-
-        if len(all_points) == 0:
-            raise ValueError("No points to plot")
-
-        if not density:
-            plt.scatter(all_points[:, 0], all_points[:, 1], c=all_points[:,2],s=all_points[:,3], cmap='viridis')
-            plt.colorbar(label='velocity')
-        else:
-            if grid_min is None: grid_min = np.min(all_points[:,:2])
-            if grid_max is None: grid_max = np.max(all_points[:,:2])
-            density, xedges, yedges = np.histogram2d(all_points[:,0], all_points[:,1], bins=bins, weights=all_points[:,3],
-                                         range = [[grid_min, grid_max], [grid_min, grid_max]])
+        summat = []
+        all_weights = 0
+        for (x, y, w) in zip(all_points[:,0], all_points[:,1], all_points[:,3]):
             
-            plt.imshow(density.T, origin='lower', 
-                    extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]],
-                    aspect='auto', interpolation='nearest')
-            
-        plt.gca().set_aspect('equal', adjustable='box')
-        plt.show()
-
-    def _bin_by_velocity(self, vmin, vmax, num_bins):
-        """
-        Bin points by their velocities.
-
-        Parameters:
-        - vmin: minimum velocity
-        - vmax: maximum velocity
-        - num_bins: number of bins
-
-        Returns:
-        - List of lists of (x, y, v, w) tuples representing points in each bin
-        """
-        bins = np.linspace(vmin, vmax, num_bins + 1)
-        binned_points = [[] for _ in range(num_bins)]
-
-        for point in self.get_all_points(vmin, vmax):
-            for i in range(num_bins):
-                if bins[i] <= point[2] < bins[i + 1]:
-                    binned_points[i].append(point)
-                    break
-
-        return binned_points
-    
-    def get_spectrum(self, vmin = None, vmax = None, bins = 40):
+            _mat = []
+            for fibind in fiber_inds:
+                vec = self.compute_vec(specind, fibind, x, y, n_trim=n_trim) * w
+                _mat.append(vec)
         
-        # TODO: intrinsic width of the spectrum needs to be considered, not implemented yet
-
-        if vmin == None: vmin = np.min(np.array(self.get_all_points())[:,2])
-        if vmax == None: vmax = np.max(np.array(self.get_all_points())[:,2])
-
-        binned_points = self._bin_by_velocity(vmin, vmax, bins)
-        out_spec = np.zeros(bins)
-        for i, bin in enumerate(binned_points):
-            out_spec[i] = np.sum(np.array(bin)[:,3])
-        return out_spec
+            summat.append(_mat)
+            all_weights += w
+        
+        return np.sum(summat, axis = 0) / all_weights
+        
     
-    def get_centroid(self, vmin = None, vmax = None, bins = 40):
-
-        if vmin == None: vmin = np.min(np.array(self.get_all_points())[:,2])
-        if vmax == None: vmax = np.max(np.array(self.get_all_points())[:,2])
-
-        binned_points = self._bin_by_velocity(vmin, vmax, bins)
-        centroids = np.zeros((bins,2))
-        for i, bin in enumerate(binned_points):
-            centroids[i,0] = np.sum(np.array(bin)[:,3] * np.array(bin)[:,0])
-            centroids[i,1] = np.sum(np.array(bin)[:,3] * np.array(bin)[:,1])
-        return centroids
