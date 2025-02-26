@@ -126,6 +126,10 @@ class BaseImageReconstructor:
             return False, self.current_ll
         
     def set_initial_state(self, central_frac = None):
+        '''
+        sets initial state for the MCMC chain
+        self.current_vec, self.current_ll, self.temp are set
+        '''
 
         if self.ini_method == 'random':
             # random locations
@@ -473,5 +477,401 @@ class CouplingMapImageReconstructor(BaseImageReconstructor):
         current_ll = np.nansum((current_observable - self.data)**2 / self.data_err**2) / self.ndf / 2
         return current_ll
 
+import emcee
+
+class BaseModelFitter:
+
+    '''
+    Model fitter using emcee.
+    Regardless of the model, the scene is projected on a regular grid of pixels.
+    "compute_model_from_params" should be implemented in a subclass of BaseModelFitter.
+    '''
+
+    vectype = np.float32 # or np.complex_
+
+    def __init__(self, matrix, data, data_err, outname,
+                 axis_len = 33,
+                #  gamma = 256,
+                #  tau = 1e4,
+                #  target_chi2 = 1,
+                 burn_in_iter = 200,
+                 nwalkers = 10,
+                #  ini_temp = 1,
+                 seed = 123456,
+                 loglevel = logging.INFO
+                 ):
+
+        self.matrix = matrix
+        self.data = data
+        self.data_err = data_err
+        self.len_vec = np.shape(matrix)[0]
+
+        # image parameters
+        self.axis_len = axis_len
+        self.center = axis_len // 2 
+
+        # temperature schedule parameters
+        # self.gamma = gamma
+        # self.tau = tau
+        # self.target_chi2 = target_chi2
+        # self.ini_temp = ini_temp
+
+        # convergence parameters
+        self.burn_in_iter = burn_in_iter
+        self.ini_seed = seed
+        np.random.seed(seed)
+
+        self.outname = outname
+
+        self.nwalkers = nwalkers
+
+        logging.basicConfig(level = loglevel, format='%(asctime)s - %(levelname)s - %(message)s')
+
+    
+    def compute_ll(self, params):
+        '''
+        compute the log likelihood of the model given the parameters
+        '''
+        # raise NotImplementedError("compute_ll must be overridden")
+        current_observable = self.compute_model_from_params(params)
+
+        # -chi^2 / 2
+        current_ll = -0.5 * np.nansum((current_observable - self.data)**2 / self.data_err**2) #/ self.ndf / 2
+        return current_ll
+    
+    def compute_model_from_params(self, params):
+        '''
+        compute the model vector from the parameters
+        '''
+        raise NotImplementedError("compute_model_from_params must be overridden")
+    
+    def run_chain(self, niter, ini_params, ini_ball_size = 1e-3, plot_every=100):
+
+        self.nparams = len(ini_params)
+        self.niter = niter
+
+        pos = np.random.normal(ini_params, ini_ball_size, size=(self.nwalkers, self.nparams))
+        self.sampler = emcee.EnsembleSampler(self.nwalkers, self.nparams, self.compute_ll)
+        self.sampler.run_mcmc(pos, niter, progress=True)
+
+    
+    # def set_initial_state(self, ini_params, nwalkers = 10):
+    #     '''
+    #     sets initial state for the MCMC chain
+    #     self.current_vec, self.current_ll, self.temp are set
+    #     '''
+
+    #     # compute vector from locs
+    #     self.current_vec = self.compute_model_from_params(ini_params)
+        
+    #     # compute initial log likelihood
+    #     self.current_ll = self.compute_ll(ini_params)
+
+    #     # initial temperature
+    #     # self.temp = self.ini_temp
+
+    #     self.lls = [self.current_ll]
+    #     # self.temps = [self.temp]
+
+    #     self.params = [ini_params]
+    #     self.all_params = [ini_params]
+
+    #     self.nparams = len(ini_params)
+
+    #     self.sampler = emcee.EnsembleSampler(nwalkers, self.nparams, self.compute_ll)
+    
+    def plot_current_state(self):
+        '''
+        plot the current state
+        '''
+        fig, axs = plt.subplots(ncols=3, figsize=(12,4))
+        axs[0].imshow(self.current_vec.reshape((self.axis_len,self.axis_len)), origin='lower')
+        axs[1].semilogy(self.lls)
+        for i in range(self.nparams):
+            axs[2].plot(self.params[:,i]) #semilogy(self.temps)
+
+        axs[0].set_title('current image')
+        axs[1].set_title('log likelihood')
+        axs[2].set_title('parameters')
+
+        for ax in axs[1:]:
+            ax.set_xlabel('iteration')
+
+        fig.savefig(self.outname+'_current_state.png')
+
+    def plot_final_state(self, image):
+        '''
+        plot the final state
+        '''
+        fig, axs = plt.subplots(ncols=3, figsize=(12,4))
+        axs[0].imshow(image.reshape((self.axis_len,self.axis_len)), origin='lower')
+        axs[1].semilogy(self.lls)
+        for i in range(self.nparams):
+            axs[2].plot(self.params[:,i]) #semilogy(self.temps)
+
+        axs[0].set_title('final image')
+        axs[1].set_title('log likelihood')
+        axs[2].set_title('parameters')
+
+        for ax in axs[1:]:
+            ax.set_xlabel('iteration')
+
+        fig.savefig(self.outname+'_final_state.png')
+    
+    # def move_element(self, ni, move_scheme = 'random'):
+
+class PointSourceFitter(BaseModelFitter):
+
+    def __init__(self, matrix, data, data_err, outname, 
+                    axis_len = 33,
+                 n_point_sources = 1,
+                 burn_in_iter = 200,
+                 seed = 123456,
+                 loglevel = logging.INFO
+                 ):
+        super().__init__(matrix, data, data_err, outname,
+                            axis_len = axis_len,
+                         # gamma = gamma,
+                         # tau = tau,
+                         # target_chi2 = target_chi2,
+                         burn_in_iter = burn_in_iter,
+                         # ini_temp = ini_temp,
+                         seed = seed,
+                         loglevel=loglevel)
+        
+        self.n_point_sources = n_point_sources
+
+    def compute_vec_point(self, x, y):
+    
+        xint, yint = int(x), int(y)
+        xfrac, yfrac = x - xint, y - yint
+
+        # compute the model vector from the locations
+        vec = np.zeros(self.len_vec, dtype = self.vectype)
+
+        loc = xint * self.axis_len + yint
+        vec += self.matrix[:,loc] * (1 - xfrac) * (1 - yfrac)
+        if xint + 1 < self.axis_len:
+            loc = (xint + 1) * self.axis_len + yint
+            vec += self.matrix[:,loc] * xfrac * (1 - yfrac)
+        else:
+            return np.nan
+        if yint + 1 < self.axis_len:
+            loc = xint * self.axis_len + (yint + 1)
+            vec += self.matrix[:,loc] * (1 - xfrac) * yfrac
+        else:
+            return np.nan
+        if xint + 1 < self.axis_len and yint + 1 < self.axis_len:
+            loc = (xint + 1) * self.axis_len + (yint + 1)
+            vec += self.matrix[:,loc] * xfrac * yfrac
+        else:
+            return np.nan
+        
+        return vec
+        
+    def compute_model_from_params(self, params):
+        '''
+        compute the model vector from the parameters
+        '''
+
+        if self.n_point_sources == 1:
+            [x, y] = params
+
+            vec = self.compute_vec_point(x, y)
+        
+        else:
+            vec = np.zeros(self.len_vec, dtype = self.vectype)
+            fsum = 0
+
+            for i in range(self.n_point_sources):
+                x, y = params[3*i], params[3*i+1]
+                if i == 0:
+                    f = 1
+                else:
+                    f = params[3*i-1]
+                vec += f * self.compute_vec_point(x, y)
+                fsum += f
+            
+            # normalize the fluxes
+            vec /= fsum
+
+        return vec
+
+class GaussianBlobFitter(BaseModelFitter):
+
+    min_sigma = 1e-2
+    bound_width = 1
 
 
+    def __init__(self, matrix, data, data_err, outname,
+                    axis_len = 33,
+                    fix_circular = False,
+                    # n_blobs = 1,
+                    burn_in_iter = 200,
+                    seed = 123456,
+                    loglevel = logging.INFO
+                    ):
+            super().__init__(matrix, data, data_err, outname,
+                            axis_len = axis_len,
+                            # gamma = gamma,
+                            # tau = tau,
+                            # target_chi2 = target_chi2,
+                            burn_in_iter = burn_in_iter,
+                            # ini_temp = ini_temp,
+                            seed = seed,
+                            loglevel=loglevel)
+            
+            # self.n_blobs = n_blobs
+            xa = np.arange(self.axis_len)
+            self.xg, self.yg = np.meshgrid(xa, xa)
+
+            self.fix_circular = fix_circular
+    
+    def compute_model_from_params(self, params):
+
+        if not self.fix_circular:
+            [x, y, sigma_x, sigma_y, theta] = params
+        else:
+            [x, y, sigma] = params
+
+        # if sigma_x < 0 or sigma_y < 0:
+        #     return np.inf
+        
+        # if x < 0 or x > self.axis_len or y < 0 or y > self.axis_len:
+        #     return np.inf
+        
+        # if theta < -np.pi/2 or theta > np.pi/2:
+        #     return np.inf
+        
+        # print(params)
+
+        # compute the model vector from the parameters
+
+        from astropy.modeling.models import Gaussian2D
+        
+        if not self.fix_circular:
+            g = Gaussian2D(amplitude=1, x_mean=x, y_mean=y, x_stddev=sigma_x, y_stddev=sigma_y, theta=theta)
+        else:
+            g = Gaussian2D(amplitude=1, x_mean=x, y_mean=y, x_stddev=sigma, y_stddev=sigma)
+        
+        _im = g(self.xg, self.yg).flatten()
+        # print(np.shape(vec))
+        if np.nansum(_im) == 0:
+            logging.info("zero flux encountered. params:", params)
+        
+        else:
+            _im = _im / np.nansum(_im) # normalize the fluxes
+
+        vec = self.matrix @ _im
+        return vec
+
+    def compute_ll(self, params):
+
+        # check if (x,y) are within bounds
+        if params[0] < self.bound_width:
+            logging.info("x out of bounds. x = %.2f" % params[0])
+            params[0] = self.bound_width
+        if params[0] > self.axis_len-self.bound_width:
+            logging.info("x out of bounds. x = %.2f" % params[0])
+            params[0] = self.axis_len-self.bound_width
+        if params[1] < self.bound_width:
+            logging.info("y out of bounds. y = %.2f" % params[1])
+            params[1] = self.bound_width
+        if params[1] > self.axis_len-self.bound_width:
+            logging.info("y out of bounds. y = %.2f" % params[1])
+            params[1] = self.axis_len-self.bound_width
+
+        # [x, y, sigma_x, sigma_y, theta] = params
+
+        # if params[2] < 0:
+        #     # logging.info("negative sigma_x")
+        #     params[2] *= -1
+        # if params[3] < 0:
+        #     # logging.info("negative sigma_y")
+        #     params[3] *= -1
+
+
+        # check sigma
+        if params[2] < self.min_sigma:
+            logging.debug("sigma_x too small")
+            params[2] = self.min_sigma
+        
+        if not self.fix_circular:
+            if params[3] < self.min_sigma:
+                logging.debug("sigma_y too small")
+                params[3] = self.min_sigma
+
+            if params[2] > params[3]:
+                logging.debug("swap sigma")
+                params[2], params[3] = params[3], params[2]
+                params[4] += np.pi/2
+                # params = [x, y, sigma_x, sigma_y, theta]
+
+        # if sigma_x < 0 or sigma_y < 0:
+        #     logging.info("negative sigma")
+        #     return -np.inf
+
+
+
+        # if x < 1 or x > self.axis_len-1 or y < 1 or y > self.axis_len-1:
+        #     logging.info("out of bounds. (x,y)=(%.2f,%.2f)" % (x,y))
+        #     return -np.inf
+        
+        # check if position angle is within bounds
+        if not self.fix_circular:
+            if params[4] < -np.pi/2:
+                params[4] += np.pi
+            
+            if params[4] > np.pi/2:
+                params[4] -= np.pi
+                # logging.info("theta out of bounds")
+                # return -np.inf
+            
+            
+        return super().compute_ll(params)
+
+
+
+    
+class PointSourceModel:
+
+    vectype = np.float32 # or np.complex_
+
+    def __init__(self, matrix, data, data_err, outname,
+                 gamma = 256,
+                 tau = 1e4,
+                 target_chi2 = 1,
+                 burn_in_iter = 200,
+                 ini_temp = 1,
+                 seed = 123456,
+                 loglevel = logging.INFO
+                 ):
+
+
+        # store matrix and data
+        self.matrix = matrix
+        self.data = data
+        self.data_err = data_err
+        self.len_vec = np.shape(matrix)[0]
+
+        # temperature schedule parameters
+        self.gamma = gamma
+        self.tau = tau
+        self.target_chi2 = target_chi2
+        self.ini_temp = ini_temp
+
+        # convergence parameters
+        self.burn_in_iter = burn_in_iter
+        self.ini_seed = seed
+        np.random.seed(seed)
+
+        self.outname = outname
+
+        logging.basicConfig(level = loglevel, format='%(asctime)s - %(levelname)s - %(message)s')
+
+    def compute_ll(self, pos):
+
+        (pos_x, pos_y) = pos
+
+        # compute the model vector from the locations
+        vec = np.zeros(self.len_vec, dtype = self.vectype)

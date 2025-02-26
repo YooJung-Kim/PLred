@@ -2,7 +2,7 @@ import numpy as np
 from astropy.io import fits
 import matplotlib.pyplot as plt
 
-from .imgrecon import CouplingMapImageReconstructor
+from .imgrecon import CouplingMapImageReconstructor, PointSourceFitter, GaussianBlobFitter
 from .mapmodel import CouplingMapModel
 
 # here I intend to add model fitting as well
@@ -203,6 +203,55 @@ class PLMapFit:
 
     #     self.rc.plot_diagnostic()
 
+    def run_mcmc_pointsource(self, n_point_sources, ini_params, ini_ball_size = 0.1,
+                             niter = 1000, 
+                             burn_in_iter=100, 
+                             seed=12345, 
+                             plot_every = 500):
+
+        self.rc = PointSourceFitter(self.mat.T, self.observed, self.observed_err, 'pointsouce_test',
+                                                axis_len = self.mapmodel.image_ngrid,
+                                                n_point_sources= n_point_sources,
+                                                # ini_temp= self.ini_temp,
+                                                # tau = self.tau,
+                                                burn_in_iter= burn_in_iter,
+                                                # gamma = self.gamma,
+                                                seed = seed,
+                                                # n_element= self.n_elemenet,
+                                                # target_chi2= self.target_chi2
+                                            
+                                                )
+        self.rc.run_chain(niter, ini_params, ini_ball_size, plot_every = plot_every)
+
+        return self.rc
+    
+    def run_mcmc_gaussian(self, ini_params, ini_ball_size = 0.1,
+                             niter = 1000, 
+                             burn_in_iter=100, 
+                             seed=12345, 
+                             plot_every = 500):
+
+        if len(ini_params) == 5:
+            fix_circular = False
+        elif len(ini_params) == 3:
+            fix_circular = True
+        else:
+            raise ValueError("ini_params should have 3 or 5 elements")
+        self.rc = GaussianBlobFitter(self.mat.T, self.observed, self.observed_err, 'gaussianblob_test',
+                                                axis_len = self.mapmodel.image_ngrid,
+                                                fix_circular= fix_circular,
+                                                # ini_temp= self.ini_temp,
+                                                # tau = self.tau,
+                                                burn_in_iter= burn_in_iter,
+                                                # gamma = self.gamma,
+                                                seed = seed,
+                                                # n_element= self.n_elemenet,
+                                                # target_chi2= self.target_chi2
+                                            
+                                                )
+        self.rc.run_chain(niter, ini_params, ini_ball_size, plot_every = plot_every)
+
+        return self.rc
 
 
 def plot_maps(maps, titles=None, texts=None, origin='upper', vmin=None, vmax=None,
