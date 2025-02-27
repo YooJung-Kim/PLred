@@ -1020,7 +1020,7 @@ class DiskFitter(PolyBaseModelFitter):
 
         return iso_map
 
-    def compute_model_from_params(self, params_array):
+    def compute_model_from_params(self, params_array, return_image = False):
         params_dict = self.params_array_to_dict(params_array)
         # compute disk iso velocity map
         iso_map = self.compute_disk(params_array)
@@ -1037,6 +1037,10 @@ class DiskFitter(PolyBaseModelFitter):
                 iso_map[wavind] *= (1 - self.point_source_fracs[wavind])
                 iso_map[wavind] += self.point_source_fracs[wavind] * star
 
+        if return_image:
+            # return the image instead of the model vector
+            return iso_map
+        
         # compute the model vector from the parameters
         vecs = np.array([self.ModelFitters[wavind].matrix @ iso_map[wavind].flatten() for wavind in range(self.nwav)])
         return vecs
