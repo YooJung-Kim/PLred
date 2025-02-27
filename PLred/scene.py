@@ -111,22 +111,93 @@ def make_simple_gaussian_disk(Vrot, Rstar, disk_fwhm, incl_angle, PA, beta = -0.
 
     # distance to the disk center
     rmap = np.sqrt(xg2**2 + yg2**2)
+    rmask = np.sqrt(xg**2 + yg**2) > Rstar
 
     # intensity map of the disk
     disk_sig = disk_fwhm / (2*np.sqrt(2*np.log(2)))
-    intenmap = np.exp(-0.5*(rmap/disk_sig)**2)
+    intenmap = np.exp(-0.5*(rmap/disk_sig)**2) * rmask
 
     # define rotation velocity profile
     def vfun(r): return Vrot * (r / Rstar)**beta
 
     # velocity map
-    velmap = -(vfun(rmap)/rmap)* np.sin(incl_angle) * (np.cos(PA) * xg + np.sin(PA) * yg)
+    velmap = -(vfun(rmap)/rmap)* np.sin(incl_angle) * (np.cos(PA) * xg + np.sin(PA) * yg) * rmask
 
     if plot:
         fig, axs = plt.subplots(ncols=2, figsize=(10,4))
         axs[0].imshow(intenmap, origin='lower', extent=(-fov/2, fov/2, -fov/2, fov/2))
-        axs[0].contour(intenmap, origin='lower', extent=(-fov/2, fov/2, -fov/2, fov/2),
-                       levels = [0.5], colors='white')
+        # axs[0].contour(intenmap, origin='lower', extent=(-fov/2, fov/2, -fov/2, fov/2),
+        #                levels = [0.5], colors='white')
+        p=axs[1].imshow(velmap, origin='lower', extent=(-fov/2, fov/2, -fov/2, fov/2), cmap='RdBu')
+        axs[1].contour(velmap, origin='lower', extent=(-fov/2, fov/2, -fov/2, fov/2),
+                       colors='black',linestyles='--', alpha=0.3,
+                       levels=[0])
+        plt.colorbar(p, ax=axs[1])
+        
+        axs[0].set_title('Intensity map')
+        axs[1].set_title('Velocity map')
+
+        for ax in axs:
+            ax.set_xlabel('x (mas)')
+            ax.set_ylabel('y (mas)')
+    return intenmap, velmap, xg, yg
+
+
+def make_simple_powerlaw_disk(Vrot, Rstar, Rout, power_index, incl_angle, PA, beta = -0.5,
+                              ngrid = 128, fov = 30, 
+                              plot = True):
+    '''
+    make simple Gaussian disk model
+    Assumes Gaussian intensity distribution
+    and simple rotation (zero inward/outward velocity)
+
+    args:
+        Vrot: stellar rotation velocity (km/s)
+        Rstar: stellar radius (mas)
+        Rout: disk outer radius (mas)
+        power_index: power of the power-law intensity distribution
+        incl_angle: inclination angle (radians)
+        PA: disk position angle (radians)
+        beta: power of the rotation velocity profile (-0.5 for Keplerian)
+        ngrid: resolution of the output image
+        fov: field of view (diameter) of the output image (mas)
+    
+    returns:
+        intenmap: intensity map
+        velmap: velocity map
+        xg: x grid in mas
+        yg: y grid in mas
+    '''
+
+    # output grid
+    xa = np.linspace(-fov/2, fov/2, ngrid)
+    yg, xg = np.meshgrid(xa, xa, indexing = 'ij') 
+
+    # grid in the disk cylindrical coordinates
+    mat = np.array([[np.cos(PA) * np.cos(incl_angle), np.sin(PA) * np.cos(incl_angle)], [-np.sin(PA), np.cos(PA)]]) / np.cos(incl_angle)
+    [xg2,yg2] = (mat @ (np.array([xg.flatten(), yg.flatten()]))) 
+    xg2 = xg2.reshape((ngrid, ngrid))
+    yg2 = yg2.reshape((ngrid, ngrid))
+
+    # distance to the disk center
+    rmap = np.sqrt(xg2**2 + yg2**2)
+    rmask = (np.sqrt(xg**2 + yg**2) > Rstar) & (rmap < Rout)
+
+    # intensity map of the disk
+    
+    intenmap = (rmap/Rout)**power_index * rmask
+
+    # define rotation velocity profile
+    def vfun(r): return Vrot * (r / Rstar)**beta
+
+    # velocity map
+    velmap = -(vfun(rmap)/rmap)* np.sin(incl_angle) * (np.cos(PA) * xg + np.sin(PA) * yg) * rmask
+
+    if plot:
+        fig, axs = plt.subplots(ncols=2, figsize=(10,4))
+        axs[0].imshow(intenmap, origin='lower', extent=(-fov/2, fov/2, -fov/2, fov/2))
+        # axs[0].contour(intenmap, origin='lower', extent=(-fov/2, fov/2, -fov/2, fov/2),
+        #                levels = [0.5], colors='white')
         p=axs[1].imshow(velmap, origin='lower', extent=(-fov/2, fov/2, -fov/2, fov/2), cmap='RdBu')
         axs[1].contour(velmap, origin='lower', extent=(-fov/2, fov/2, -fov/2, fov/2),
                        colors='black',linestyles='--', alpha=0.3,

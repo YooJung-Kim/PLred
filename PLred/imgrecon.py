@@ -830,7 +830,228 @@ class GaussianBlobFitter(BaseModelFitter):
             
         return super().compute_ll(params)
 
+class PolyBaseModelFitter(BaseModelFitter):
+    '''
+    Base class for wavelength-dependent model fitting
+    '''
 
+    def __init__(self, matrices, data_list, data_err_list, outname,
+                 axis_len = 33,
+                 burn_in_iter = 200,
+                 seed = 123456,
+                 loglevel = logging.INFO,
+                 nwalkers = 10,
+
+                 ):
+        
+        # Define the model fitters for each matrix
+        self.ModelFitters = [
+            BaseModelFitter(matrix, data, data_err, outname,
+                            axis_len = axis_len,
+                            burn_in_iter = burn_in_iter,
+                            seed = seed,
+                            loglevel=loglevel)
+            for matrix, data, data_err in zip(matrices, data_list, data_err_list)
+        ]
+
+        self.data = data_list
+        self.data_err = data_err_list
+
+        self.nwav = len(matrices)
+        self.nwalkers = nwalkers
+
+        logging.basicConfig(level = loglevel, format='%(asctime)s - %(levelname)s - %(message)s')
+
+    # def compute_ll(self, params):
+    #     '''
+    #     compute the log likelihood of the model given the parameters
+    #     '''
+    #     # raise NotImplementedError("compute_ll must be overridden")
+    #     current_observable = self.compute_model_from_params(params)
+
+    #     # -chi^2 / 2
+    #     current_ll = -0.5 * np.nansum((current_observable - self.data)**2 / self.data_err**2) #/ self.ndf / 2
+    #     return current_ll
+    
+    # def compute_ll(self, params):
+    #     '''
+    #     compute the log likelihood of the model given the parameters
+    #     '''
+
+
+    #     # raise NotImplementedError("compute_ll must be overridden")
+        
+    #     # lls = np.zeros(self.nwav)
+    #     # for wavind in range(self.nwav):
+    #     #     # compute log likelihood for each wavelength
+
+    #     #     current_observable = self.compute_model_from_params(params)
+    #     #     current_ll = -0.5 * np.nansum((current_observable - self.data_list[wavind])**2 / self.data_err_list[wavind]**2) #/ self.ndf / 2
+    #     #     # compute the model vector from the parameters
+    #     #     # self.ModelFitters[wavind].current_vec = self.ModelFitters[wavind].compute_model_from_params(params[wavind])
+    #     #     # compute initial log likelihood
+    #     #     lls[wavind] = current_ll #self.ModelFitters[wavind].compute_ll(params)
+        
+    #     # # current_observable = self.compute_model_from_params(params)
+
+    #     # # -chi^2 / 2
+    #     # # current_ll = -0.5 * np.nansum((current_observable - self.data)**2 / self.data_err**2) #/ self.ndf / 2
+    #     # return np.sum(lls) #current_ll
+    
+    # def compute_model_from_params(self, params):
+    #     '''
+    #     compute the model vector from the parameters
+    #     '''
+    #     raise NotImplementedError("compute_model_from_params must be overridden")
+    
+    # def run_chain(self, niter, ini_params, ini_ball_size = 1e-3, plot_every=100):
+
+    #     self.nparams = len(ini_params)
+    #     self.niter = niter
+
+    #     pos = np.random.normal(ini_params, ini_ball_size, size=(self.nwalkers, self.nparams))
+    #     self.sampler = emcee.EnsembleSampler(self.nwalkers, self.nparams, self.compute_ll)
+    #     self.sampler.run_mcmc(pos, niter, progress=True)
+
+from PLred.scene import make_simple_powerlaw_disk, get_iso_velocity_map
+class DiskFitter(PolyBaseModelFitter):
+
+
+
+    def __init__(self, fixed_params, vgrid, matrices, data_list, data_err_list, outname,
+                 apply_point_source_fraction = False,
+                 point_source_fracs = None,
+                 axis_len = 33,
+                 image_fov = 20,
+                 burn_in_iter = 200,
+                 seed = 123456,
+                 loglevel = logging.INFO
+                 ):
+        '''
+        Disk fitter
+        fixed_params: dictionary of fixed parameters for the disk model
+        vgrid: velocity grid for the disk model
+        matrices: list of matrices for each wavelength
+        data_list: list of data for each wavelength
+        data_err_list: list of data errors for each wavelength
+
+        Disk params include
+        - Vrot
+        - Rstar
+        - Rout
+        - power_index
+        - incl_angle
+        - PA
+        - beta
+        '''
+        super().__init__(matrices, data_list, data_err_list, outname,
+                         axis_len = axis_len,
+                         burn_in_iter = burn_in_iter,
+                         seed = seed,
+                         loglevel=loglevel)
+        
+
+        
+        # grid where the disk will be defined
+        self.xa = np.linspace(-image_fov/2, image_fov/2, axis_len)
+        self.yg, self.xg = np.meshgrid(self.xa, self.xa, indexing='ij')
+
+        self.vgrid = vgrid
+        self.axis_len = axis_len
+        self.image_fov = image_fov
+
+        self.apply_point_source_fraction = apply_point_source_fraction
+        if apply_point_source_fraction:
+            assert point_source_fracs is not None, "point_source_fracs must be provided if apply_point_source_fraction is True"
+            self.point_source_fracs = point_source_fracs
+
+            
+
+        assert len(self.point_source_fracs) == self.nwav, "point_source_fracs must have the same length as the number of wavelengths"
+
+        self.disk_params = {
+            'Vrot': None if 'Vrot' not in fixed_params else fixed_params['Vrot'],
+            'Rstar': None if 'Rstar' not in fixed_params else fixed_params['Rstar'],
+            'Rout': None if 'Rout' not in fixed_params else fixed_params['Rout'],
+            'power_index': None if 'power_index' not in fixed_params else fixed_params['power_index'],
+            'incl_angle': None if 'incl_angle' not in fixed_params else fixed_params['incl_angle'],
+            'PA': None if 'PA' not in fixed_params else fixed_params['PA'],
+            'beta': None if 'beta' not in fixed_params else fixed_params['beta'],
+        }
+
+        self.fixed_params = fixed_params
+        self.free_params = {k: v for k, v in self.disk_params.items() if v is None}
+        self.fixed_params = {k: v for k, v in self.disk_params.items() if v is not None}
+        self.free_param_keys = list(self.free_params.keys())
+
+
+    def params_dict_to_array(self, params_dict):
+        return np.array([params_dict[k] for k in self.free_param_keys])
+
+    def params_array_to_dict(self, params_array):
+        params_dict = self.fixed_params.copy()
+        params_dict.update({k: v for k, v in zip(self.free_param_keys, params_array)})
+        return params_dict
+
+    def compute_disk(self, params_array, plot=False):
+        params_dict = self.params_array_to_dict(params_array)
+        # override the disk parameters with the input params
+        self.disk_params['Vrot'] = params_dict['Vrot']
+        self.disk_params['Rstar'] = params_dict['Rstar']
+        self.disk_params['Rout'] = params_dict['Rout']
+        self.disk_params['power_index'] = params_dict['power_index']
+        self.disk_params['incl_angle'] = params_dict['incl_angle']
+        self.disk_params['PA'] = params_dict['PA']
+        self.disk_params['beta'] = params_dict['beta']
+
+        # compute the disk model
+        intenmap, velmap, _, _ = make_simple_powerlaw_disk(self.disk_params['Vrot'], 
+                                                    self.disk_params['Rstar'], 
+                                                    self.disk_params['Rout'], 
+                                                    self.disk_params['power_index'], 
+                                                    self.disk_params['incl_angle'], 
+                                                    self.disk_params['PA'], 
+                                                    self.disk_params['beta'],
+                                                    ngrid = self.axis_len,
+                                                    fov = self.image_fov,
+                                                    plot=plot)
+        
+        iso_map = get_iso_velocity_map(intenmap, velmap, self.vgrid)
+
+        return iso_map
+
+    def compute_model_from_params(self, params_array):
+        params_dict = self.params_array_to_dict(params_array)
+        # compute disk iso velocity map
+        iso_map = self.compute_disk(params_array)
+        iso_map = iso_map / np.nansum(iso_map, axis=(1,2))[:,None,None] # normalize the map
+
+        # compute stellar contribution
+        if self.apply_point_source_fraction:
+
+            star = np.sqrt(self.xg**2 + self.yg**2) < params_dict['Rstar']
+            star = star.astype(np.float32)
+            star = star / np.nansum(star) # normalize the fluxes
+
+            for wavind in range(self.nwav):
+                iso_map[wavind] *= (1 - self.point_source_fracs[wavind])
+                iso_map[wavind] += self.point_source_fracs[wavind] * star
+
+        # compute the model vector from the parameters
+        vecs = np.array([self.ModelFitters[wavind].matrix @ iso_map[wavind].flatten() for wavind in range(self.nwav)])
+        return vecs
+
+    # def compute_ll(self, params_array):
+    #     params_dict = self.params_array_to_dict(params_array)
+    #     return super().compute_ll(params_array)
+
+    def run_chain(self, niter, ini_params, ini_ball_size = 1e-3, plot_every=100):
+
+        params_array = self.params_dict_to_array(ini_params)
+
+        return super().run_chain(niter, params_array, ini_ball_size = ini_ball_size, plot_every=plot_every)
+
+    
 
     
 class PointSourceModel:

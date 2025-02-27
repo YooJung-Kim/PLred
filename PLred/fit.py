@@ -2,7 +2,7 @@ import numpy as np
 from astropy.io import fits
 import matplotlib.pyplot as plt
 
-from .imgrecon import CouplingMapImageReconstructor, PointSourceFitter, GaussianBlobFitter
+from .imgrecon import CouplingMapImageReconstructor, PointSourceFitter, GaussianBlobFitter, DiskFitter
 from .mapmodel import CouplingMapModel
 
 # here I intend to add model fitting as well
@@ -252,6 +252,74 @@ class PLMapFit:
         self.rc.run_chain(niter, ini_params, ini_ball_size, plot_every = plot_every)
 
         return self.rc
+
+
+class PolyPLMapFit(PLMapFit):
+
+    # Map fitting class, but this time with multiple wavelength channels
+
+    def __init__(self, matrix_files):
+
+        self.load_matrix_from_file_all(matrix_files)
+        
+
+    def prepare_data_all(self, fiber_inds, specinds):
+
+        nwav = len(specinds)
+
+        observeds = []
+        observed_errs = []
+        idxs = []
+
+        for i in range(nwav):
+            self.prepare_data(fiber_inds, specind = specinds[i])
+            observeds.append(self.observed)
+            observed_errs.append(self.observed_err)
+            idxs.append(self.idx)
+
+        self.observeds = np.array(observeds)
+        self.observed_errs = np.array(observed_errs)
+        self.idxs = np.array(idxs)
+    
+    def load_matrix_from_file_all(self, filenames):
+
+        mats = []
+        mat_specinds = []
+
+        for filename in filenames:
+            self.load_matrix_from_file(filename)
+            mats.append(self.mat)
+            mat_specinds.append(self.mat_specind)
+        
+        self.mat = np.array(mats)
+        self.mat_specind = np.array(mat_specinds)
+        self.mat_full = self.mat.copy()
+
+    def run_mcmc_disk(self, fixed_params, vgrid, ini_params, ini_ball_size = 0.1,
+                             niter = 1000, 
+                             apply_point_source_fraction = False,
+                             point_source_fracs = None,
+                             burn_in_iter=100, 
+                             seed=12345, 
+                             plot_every = 500):
+
+        self.rc = DiskFitter(fixed_params,
+                             vgrid,
+                             np.transpose(self.mat, (0,2,1)), 
+                             self.observeds, 
+                             self.observed_errs, 
+                             'disk_test',
+                             apply_point_source_fraction= apply_point_source_fraction,
+                             point_source_fracs = point_source_fracs,
+                             axis_len = self.mapmodel.image_ngrid,
+                             image_fov = self.mapmodel.image_fov,
+                             burn_in_iter= burn_in_iter,
+                             seed = seed,
+                            )
+        self.rc.run_chain(niter, ini_params, ini_ball_size, plot_every = plot_every)
+
+        return self.rc
+
 
 
 def plot_maps(maps, titles=None, texts=None, origin='upper', vmin=None, vmax=None,
