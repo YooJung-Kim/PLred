@@ -185,3 +185,4 @@ PLred/examples/example_image_reconstruction/*
 PLred/examples/example_image_modeling/*
 PLred/examples/example_model_fitting/gaussian_fitting_results/
 PLred/examples/example_model_fitting/circle_fitting_results/
+PLred/examples/example_model_fitting/scratch*
