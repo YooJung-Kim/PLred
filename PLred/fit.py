@@ -320,6 +320,24 @@ class PolyPLMapFit(PLMapFit):
 
         return self.rc
 
+    def get_logprobs(self, discard, flat=True):
+        return self.rc.sampler.get_log_prob(discard=discard, flat=flat)
+    
+    def get_chain(self, discard, flat=True):
+        return self.rc.sampler.get_chain(discard=discard, flat=flat)
+    
+    def get_images(self, params):
+        
+        params_array = self.rc.params_dict_to_array(params)
+        iso_map = self.rc.compute_model_from_params(params_array, return_image = True)
+        return iso_map
+    
+    def get_vecs(self, params):
+        
+        params_array = self.rc.params_dict_to_array(params)
+        vecs = self.rc.compute_model_from_params(params_array, return_image = False)
+        return vecs
+
 
 
 def plot_maps(maps, titles=None, texts=None, origin='upper', vmin=None, vmax=None,
