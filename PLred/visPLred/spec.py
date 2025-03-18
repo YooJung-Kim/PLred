@@ -853,14 +853,19 @@ class SpectrumModel:
                 _yarr_recon = recon.reshape((-1, xmax-xmin))[_xarr]
 
                 shifts = []
+                _xs = []
+                for (_x, _y, _y2) in (zip(np.arange(xmax-xmin), _yarr_im.T, _yarr_recon.T)):
+                    
+                    try:
+                        p1 = find_3point_peak(_xarr, _y)
+                        p2 = find_3point_peak(_xarr, _y2)
+                        shifts.append(p1-p2)
+                        _xs.append(_x)
+                    except:
+                        print("find peak error occurred at fibind %d, x %d" % (fibind, _x))
+                        # shifts.append(0)
                 
-                for _y, _y2 in zip(_yarr_im.T, _yarr_recon.T):
-
-                    p1 = find_3point_peak(_xarr, _y)
-                    p2 = find_3point_peak(_xarr, _y2)
-                    shifts.append(p1-p2)
-                
-                opt = np.polyfit(np.arange(xmax-xmin), shifts, deg = poly_deg_correction)
+                opt = np.polyfit(_xs, shifts, deg = poly_deg_correction)
 
                 ycoor_correction_map[fibind, xmin:xmax] += np.poly1d(opt)(np.arange(xmax-xmin))
 
