@@ -442,7 +442,10 @@ class CouplingMapModel:
             hdu.header['MIN_WAV'] = min(wav_reconrange)
             hdu.header['MAX_WAV'] = max(wav_reconrange)
 
-            hdu2 = fits.ImageHDU(all_map_inputs)
+            ## adding mask here
+            mask = ~np.isnan(self.datavar)
+
+            hdu2 = fits.ImageHDU(all_map_inputs * mask)
             hdu2.header['EXTNAME'] = 'data'
 
             hdu3 = fits.ImageHDU(self.datavar)
