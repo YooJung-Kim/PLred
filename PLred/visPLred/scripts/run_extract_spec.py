@@ -116,11 +116,13 @@ if __name__ == "__main__":
         header = fits.getheader(file)
 
         out_specs = []
+        out_res = []
 
         for i in range(len(data)):
 
             spec, res = sp.frame_to_spec(data[i] - dark, xmin, xmax, wav_map, matrix, return_residual = True)
             out_specs.append(spec)
+            out_res.append(res)
 
         # plt.plot(np.sum(out_specs, axis=(0,1)))
         # plt.show()
@@ -132,6 +134,8 @@ if __name__ == "__main__":
         hdu.writeto(output_dir+name+'/'+file.split('/')[-1].split('.fits')[0]+'_spec.fits', overwrite=True)
         info_config.log_reduced_files(file.split('/')[-1].split('.fits')[0]+'_spec.fits')
 
+        hdu2 = fits.PrimaryHDU(np.nanmean(np.array(out_res), axis=0))
+        hdu2.writeto(output_dir+name+'/'+file.split('/')[-1].split('.fits')[0]+'_res.fits', overwrite=True)
 
 
 
