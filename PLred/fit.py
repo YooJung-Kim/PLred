@@ -301,14 +301,15 @@ class PolyPLMapFit(PLMapFit):
                              point_source_fracs = None,
                              burn_in_iter=100, 
                              seed=12345, 
-                             plot_every = 500):
+                             plot_every = 500,
+                             outname = 'disk_test'):
 
         self.rc = DiskFitter(fixed_params,
                              vgrid,
                              np.transpose(self.mat, (0,2,1)), 
                              self.observeds, 
                              self.observed_errs, 
-                             'disk_test',
+                             outname,
                              apply_point_source_fraction= apply_point_source_fraction,
                              point_source_fracs = point_source_fracs,
                              axis_len = self.mapmodel.image_ngrid,
@@ -337,6 +338,20 @@ class PolyPLMapFit(PLMapFit):
         params_array = self.rc.params_dict_to_array(params)
         vecs = self.rc.compute_model_from_params(params_array, return_image = False)
         return vecs
+    
+    def save_mcmc_results(self, filename):
+        np.savez(filename, 
+                 chain = self.get_chain(discard=0, flat=False),
+                 logprobs = self.get_logprobs(discard=0, flat=False),
+                 free_params = self.rc.free_param_keys,
+                 vgrid = self.rc.vgrid,
+                 ini_params = self.rc.ini_params,
+                 apply_point_source_fraction = self.rc.apply_point_source_fraction,
+                 point_source_fracs = self.rc.point_source_fracs,
+                 )
+        print("MCMC results saved to ", filename)
+    
+
 
 
 
