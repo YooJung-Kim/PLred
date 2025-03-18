@@ -488,6 +488,8 @@ class BaseModelFitter:
     '''
 
     vectype = np.float32 # or np.complex_
+    _n = 0
+    plot_every = None
 
     def __init__(self, matrix, data, data_err, outname,
                  axis_len = 33,
@@ -532,11 +534,19 @@ class BaseModelFitter:
         '''
         compute the log likelihood of the model given the parameters
         '''
+
+
         # raise NotImplementedError("compute_ll must be overridden")
         current_observable = self.compute_model_from_params(params)
 
         # -chi^2 / 2
         current_ll = -0.5 * np.nansum((current_observable - self.data)**2 / self.data_err**2) #/ self.ndf / 2
+        self._n += 1
+        if (self.plot_every is not None) and (self._n % self.plot_every == 0):
+            self.current_ll = current_ll
+            self.current_chi2_indiv = np.nanmean((current_observable - self.data)**2 / self.data_err**2, axis=1)
+            self.plot_current_state()
+        
         return current_ll
     
     def compute_model_from_params(self, params):
@@ -546,6 +556,8 @@ class BaseModelFitter:
         raise NotImplementedError("compute_model_from_params must be overridden")
     
     def run_chain(self, niter, ini_params, ini_ball_size = 1e-3, plot_every=100):
+
+        self.plot_every = plot_every
 
         self.nparams = len(ini_params)
         self.niter = niter
@@ -860,6 +872,8 @@ class PolyBaseModelFitter(BaseModelFitter):
         self.nwav = len(matrices)
         self.nwalkers = nwalkers
 
+        self.outname = outname
+
         logging.basicConfig(level = loglevel, format='%(asctime)s - %(levelname)s - %(message)s')
 
     # def compute_ll(self, params):
@@ -993,16 +1007,23 @@ class DiskFitter(PolyBaseModelFitter):
         params_dict.update({k: v for k, v in zip(self.free_param_keys, params_array)})
         return params_dict
 
-    def compute_disk(self, params_array, plot=False):
-        params_dict = self.params_array_to_dict(params_array)
-        # override the disk parameters with the input params
-        self.disk_params['Vrot'] = params_dict['Vrot']
-        self.disk_params['Rstar'] = params_dict['Rstar']
-        self.disk_params['Rout'] = params_dict['Rout']
-        self.disk_params['power_index'] = params_dict['power_index']
-        self.disk_params['incl_angle'] = params_dict['incl_angle']
-        self.disk_params['PA'] = params_dict['PA']
-        self.disk_params['beta'] = params_dict['beta']
+    def compute_disk(self, params_array = None, plot=False): #, given_params_dict = False):
+
+        # if given_params_dict:
+            # only used for plot_current_state
+            # self.disk_params = params_array
+        
+        if params_array is not None:
+            # this is the default
+            params_dict = self.params_array_to_dict(params_array)
+            # override the disk parameters with the input params
+            self.disk_params['Vrot'] = params_dict['Vrot']
+            self.disk_params['Rstar'] = params_dict['Rstar']
+            self.disk_params['Rout'] = params_dict['Rout']
+            self.disk_params['power_index'] = params_dict['power_index']
+            self.disk_params['incl_angle'] = params_dict['incl_angle']
+            self.disk_params['PA'] = params_dict['PA']
+            self.disk_params['beta'] = params_dict['beta']
 
         # compute the disk model
         intenmap, velmap, _, _ = make_simple_powerlaw_disk(self.disk_params['Vrot'], 
@@ -1020,8 +1041,20 @@ class DiskFitter(PolyBaseModelFitter):
 
         return iso_map
 
-    def compute_model_from_params(self, params_array, return_image = False):
-        params_dict = self.params_array_to_dict(params_array)
+    def compute_model_from_params(self, params_array = None, return_image = False): #, given_params_dict = False):
+        
+        # if given_params_dict:
+        #     # only used for plot_current_state
+        #     params_dict = params_array
+        
+        # else:
+            # this is the default
+        
+        if params_array is not None:
+            params_dict = self.params_array_to_dict(params_array)
+        else:
+            params_dict = self.disk_params
+
         # compute disk iso velocity map
         iso_map = self.compute_disk(params_array)
         iso_map = iso_map / np.nansum(iso_map, axis=(1,2))[:,None,None] # normalize the map
@@ -1051,11 +1084,35 @@ class DiskFitter(PolyBaseModelFitter):
 
     def run_chain(self, niter, ini_params, ini_ball_size = 1e-3, plot_every=100):
 
+        self.ini_params = ini_params
+
         params_array = self.params_dict_to_array(ini_params)
 
         return super().run_chain(niter, params_array, ini_ball_size = ini_ball_size, plot_every=plot_every)
 
-    
+
+    def plot_current_state(self):
+        '''
+        overrides default plot_current_state to plot the disk model
+        '''
+        # print("plot_current_state called. params:", self.disk_params)
+        maps = self.compute_model_from_params(params_array = None, return_image=True)#, given_params_dict=True)
+
+        fig, axs = plt.subplots(ncols=len(maps), figsize=(len(maps)*2, 2), sharex=True, sharey=True)
+        for i, ax in enumerate(axs):
+            ax.imshow(maps[i])
+
+        rounded_disk_params = {key: round(value, 2) for key, value in self.disk_params.items()}
+        formatted_disk_params = ' '.join([f'{key}: {value}' for key, value in rounded_disk_params.items()])
+        formatted_disk_params += ' ll: %.3e' % self.current_ll
+        fig.suptitle("Current disk model. params: " + formatted_disk_params)
+        fig.savefig(self.outname+'_current_state.png')
+
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        ax.plot(self.current_chi2_indiv)
+        ax.set_title('current chi2. avg:%.2f' % np.average(self.current_chi2_indiv))
+        fig.savefig(self.outname+'_current_chi2.png')
 
     
 class PointSourceModel:
