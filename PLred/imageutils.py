@@ -358,8 +358,8 @@ def apply_patch(canvas, patch, xcoor, ycoor, shift_method = 'warpaffine', plot =
 
     dx = (xcoor - xp) - np.floor(xcoor - xp) #+ 0.5
     dy = (ycoor - yp) - np.floor(ycoor - yp) #+ 0.5
-    print("shifting the image by dx, dy : %.3f, %.3f" % (dx, dy))
-    print("actually shifting the image by dx, dy : %.3f, %.3f" % (dx+0.5, dy+0.5))
+    # print("shifting the image by dx, dy : %.3f, %.3f" % (dx, dy))
+    # print("actually shifting the image by dx, dy : %.3f, %.3f" % (dx+0.5, dy+0.5))
     # extend the patch for subpixel shifting
     extended_patch = (np.hstack([np.vstack([_patch, np.zeros(np.shape(_patch)[1])]), np.zeros((np.shape(_patch)[0]+1,1))]))
 
