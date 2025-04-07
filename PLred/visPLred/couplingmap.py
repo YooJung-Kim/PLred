@@ -34,7 +34,8 @@ def bin_by_centroids(psfcamframes, firstcamframes, centroids, xbins, ybins):
     return psfcam_binned_frames, firstcam_binned_frames, num_frames, idxs
 
 
-def calculate_bootstrap_variance_map(firstcamframes, idxs, nbootstrap = 100):
+def calculate_bootstrap_variance_map(firstcamframes, idxs, nbootstrap = 100,
+                                     return_bootstrap_samples = False):
 
     '''
     Calculate the bootstrap variance maps
@@ -66,7 +67,10 @@ def calculate_bootstrap_variance_map(firstcamframes, idxs, nbootstrap = 100):
     # calculate normalized boostrap frames
     normvar = np.nanvar(bootstrap_normframes, axis=0)
 
-    return var, normvar
+    if return_bootstrap_samples:
+        return var, normvar, bootstrap_normframes
+    else:
+        return var, normvar
 
 
 def validate_timestamp_matching(timestamps1, timestamps2):
@@ -217,7 +221,8 @@ class SimultaneousData:
         centroids = np.array(centroids)
         self.centroids = centroids
 
-    def bin_by_centroids(self, map_n, map_width, effective_idx = None, plot = True, calculate_variance = True, nbootstrap = 100):
+    def bin_by_centroids(self, map_n, map_width, effective_idx = None, plot = True, calculate_variance = True, nbootstrap = 100,
+                         return_bootstrap_samples = False):
 
         '''
         Bin the frames by centroids
@@ -236,6 +241,8 @@ class SimultaneousData:
             whether to calculate the bootstrap variance map
         nbootstrap: int
             number of bootstrap iterations
+        return_bootstrap_samples: bool
+            whether to return the bootstrap samples
         '''
 
         if effective_idx is not None:
@@ -277,8 +284,13 @@ class SimultaneousData:
             plt.show()
 
         if calculate_variance:
-            self.var, self.normvar = calculate_bootstrap_variance_map(firstcam_frames, self.idxs, nbootstrap = nbootstrap)
-    
+
+            if return_bootstrap_samples:
+                self.var, self.normvar, self.bootstrap_samples = calculate_bootstrap_variance_map(firstcam_frames, self.idxs, nbootstrap = nbootstrap, return_bootstrap_samples = True)
+            else:
+                self.var, self.normvar = calculate_bootstrap_variance_map(firstcam_frames, self.idxs, nbootstrap = nbootstrap)
+                self.bootstrap_samples = None
+
     def save(self, filename):
         '''
         Save the data to a fits file
@@ -304,3 +316,9 @@ class SimultaneousData:
 
         hdulist = fits.HDUList([hdu, hdu2, hdu3, hdu4, hdu5])
         hdulist.writeto(filename, overwrite=True)
+        print("Saved to %s" % filename)
+
+        if self.bootstrap_samples is not None:
+            hdu6 = fits.PrimaryHDU(self.bootstrap_samples, header=header)
+            hdu6.writeto(filename.replace('.fits', '_bootstrap.fits'), overwrite=True)
+            print("Saved bootstrap samples to %s" % filename.replace('.fits', '_bootstrap.fits'))
