@@ -102,13 +102,15 @@ class PLMapFit:
         print("Matrix loaded from ", filename, "specind", hdu[0].header['SPECIND'])
         self.mat_specind = hdu[0].header['SPECIND']
 
-    def store_hyperparams(self, ini_temp, tau, gamma, n_elemenet, target_chi2):
+    def store_hyperparams(self, ini_temp, tau, gamma, n_elemenet, target_chi2,
+                          regul_dict = {}):
 
         self.ini_temp = ini_temp
         self.tau = tau
         self.gamma = gamma
         self.n_elemenet = n_elemenet
         self.target_chi2 = target_chi2
+        self.regul_dict = regul_dict
 
     def run(self, centerfrac = None, move_ratio = 1, niter = 500, burn_in_iter=100, seed=12345, plot_every = 500,
             prior_type = 'circle', ini_method = 'random', 
@@ -125,8 +127,10 @@ class PLMapFit:
                                                 seed = seed,
                                                 n_element= self.n_elemenet,
                                                 target_chi2= self.target_chi2,
-                                                ini_method = ini_method
-                                            
+                                                ini_method = ini_method,
+                                                regul_dict= self.regul_dict
+                                                # do_entropy_regul= self.do_entropy_regul,
+                                                # entropy_regul_coeff = self.entropy_regul_coeff
                                                 )
 
 
