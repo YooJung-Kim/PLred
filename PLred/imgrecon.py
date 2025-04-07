@@ -21,6 +21,14 @@ def locs2image(locs, axis_len):
         image[x,y] += 1
     return image
 
+from scipy.special import gammaln
+
+def entropy(image):
+    sum = 0
+    for val in image.flatten():
+        if val *0 == 0:
+            sum += gammaln(val+1)
+    return -sum
 
 class BaseImageReconstructor:
     '''
@@ -42,6 +50,7 @@ class BaseImageReconstructor:
                  ini_temp = 1,
                  ini_method = 'random',
                  seed = 123456,
+                 regul_dict = {},
                  loglevel = logging.INFO
                  ):
         '''
@@ -90,6 +99,16 @@ class BaseImageReconstructor:
         self.ini_method = ini_method
         np.random.seed(seed)
 
+        # regularization
+        self.regul_dict = regul_dict
+        if len(self.regul_dict) > 0:
+            self.toggl_regul = True
+        else:
+            self.toggl_regul = False
+            self._new_logprior = 0
+            self._old_logprior = 0
+            self.current_logprior = 0
+
         self.model_central_frac = model_central_frac
         self.ini_central_frac = ini_central_frac
         self.n_fixed = 0
@@ -98,7 +117,7 @@ class BaseImageReconstructor:
 
         logging.basicConfig(level = loglevel, format='%(asctime)s - %(levelname)s - %(message)s')
 
-    def compute_ll(self, vec):
+    def compute_ll(self, vec): #, with_regul = False):
         '''
         given the vector (= (matrix) @ (image)),
         compute observables and log likelihood.
@@ -106,12 +125,63 @@ class BaseImageReconstructor:
         Recommended to implement this in a subclass of BaseImageReconstructor
         '''
         raise NotImplementedError("compute_ll must be overridden")
+    
+    def compute_regul(self):
+        
+        # compute the regularization term
+        regul = 0
+        for regul_name, regul_val in zip(self.regul_dict.keys(), self.regul_dict.values()):
 
-    def mh(self, new_ll, prior_ratio):
+            if regul_val != 0:
+                if regul_name == 'entropy':
+                    ent = entropy(locs2image(self.locs, self.axis_len))
+                    regul += regul_val * ent
+                if regul_name == 'TV':
+                    pass
+                if regul_name == 'L1':
+                    pass
+                if regul_name == 'L2':
+                    pass
+        return regul
+    
+    def compute_logprior(self, ni, newloc):
+        '''
+        compute the prior ratio for the new location
+        '''
+        if not self.toggl_regul:
+            # if no regularization, return 0
+            return 1
+        
+        oldloc = self.locs[ni].copy()
+        old_prior = self.current_logprior
+
+        # temporarily change the location
+        self.locs[ni] = newloc
+        new_prior = self.compute_regul()
+        # revert to the original location
+        self.locs[ni] = oldloc
+        # return the prior ratio
+        # ratio = new_prior / old_prior
+
+        self._old_logprior = old_prior
+        self._new_logprior = new_prior
+
+        return new_prior
+
+        # if ~np.isfinite(ratio):
+        #     # if ratio is not finite, return 1.0
+        #     logging.warning(f"Prior ratio not finite for loc {ni} at newloc {newloc}. Returning 1.0")
+        #     return 1.0
+        
+        # return new_prior / old_prior
+
+
+
+    def mh(self, new_ll, delta_prior = 0):
         '''
         Metropolis-Hastings criterion for accepting new state
         '''
-
+        prior_ratio = np.exp(delta_prior) if self.toggl_regul else 1.0
         prob_move = np.min([1,prior_ratio * (np.exp((self.current_ll - new_ll)/self.temp))])
         
         if prob_move >= np.random.rand():
@@ -120,9 +190,10 @@ class BaseImageReconstructor:
             self.temp += 1/self.tau * (current_chi2 - self.gamma * self.temp) * (1 - self.target_chi2 / current_chi2)    
             # if self.temp < 1:
             #     self.temp = 1
+            self.current_logprior = self._new_logprior
             return True, new_ll
         else:
-            
+            self.current_logprior = self._old_logprior
             return False, self.current_ll
         
     def set_initial_state(self, central_frac = None):
@@ -155,7 +226,16 @@ class BaseImageReconstructor:
         # initial temperature
         self.temp = self.ini_temp
 
+        # initial prior
+        if self.toggl_regul:
+            # compute the initial regularization term
+            self.current_logprior = self.compute_regul() 
+        else:
+            self.current_logprior = 0
+        # self.current_prior = self.compute_regul() # compute the initial prior
+
         self.lls = [self.current_ll]
+        self.priors = [self.current_logprior] 
         self.temps = [self.temp]
         self.post_locs = np.array([], dtype=int)
         self.all_post_locs = np.array([], dtype=int)
@@ -217,6 +297,7 @@ class BaseImageReconstructor:
 
     def make_prior(self, method, **kwargs):
         '''
+        (going to deprecate it)
         make prior image
 
         Parameters:
@@ -298,8 +379,11 @@ class BaseImageReconstructor:
             delta_vec = (self.matrix[:,newloc] - self.matrix[:,self.locs[ni]]) / (self.n_element + self.n_fixed)
             new_vec = self.current_vec + delta_vec
             new_ll = self.compute_ll(new_vec)
-            prior_ratio = self.prior[newloc] / self.prior[self.locs[ni]]
-            move, new_ll = self.mh(new_ll, prior_ratio)
+            # prior_ratio = self.prior[newloc] / self.prior[self.locs[ni]]
+            # prior_ratio = self.compute_prior_ratio(ni, newloc)
+            new_prior = self.compute_logprior(ni, newloc)
+            delta_prior = new_prior - self._old_prior
+            move, new_ll = self.mh(new_ll, delta_prior)
 
             if move:
                 logging.debug(f"Move_random accepted in element {ni}")
@@ -324,8 +408,11 @@ class BaseImageReconstructor:
             delta_vec = (self.matrix[:,newloc] - self.matrix[:,self.locs[ni]]) / (self.n_element + self.n_fixed)
             new_vec = self.current_vec + delta_vec
             new_ll = self.compute_ll(new_vec)
-            prior_ratio = self.prior[newloc] / self.prior[self.locs[ni]]
-            move, new_ll = self.mh(new_ll, prior_ratio)
+            #prior_ratio = self.prior[newloc] / self.prior[self.locs[ni]]
+            # prior_ratio = self.compute_prior_ratio(ni, newloc)
+            new_prior = self.compute_logprior(ni, newloc)
+            delta_prior = new_prior - self._old_logprior
+            move, new_ll = self.mh(new_ll, delta_prior)
             if move:
                 logging.debug(f"Move_smallstep accepted in element {ni}")
                 self.locs[ni] = newloc
@@ -341,8 +428,11 @@ class BaseImageReconstructor:
             delta_vec = (self.matrix[:,newloc] - self.matrix[:,self.locs[ni]]) / (self.n_element + self.n_fixed)
             new_vec = self.current_vec + delta_vec
             new_ll = self.compute_ll(new_vec)
-            prior_ratio = self.prior[newloc] / self.prior[self.locs[ni]]
-            move, new_ll = self.mh(new_ll, prior_ratio)
+            #prior_ratio = self.prior[newloc] / self.prior[self.locs[ni]]
+            # prior_ratio = self.compute_prior_ratio(ni, newloc)
+            new_prior = self.compute_logprior(ni, newloc)
+            delta_prior = new_prior - self._old_logprior
+            move, new_ll = self.mh(new_ll, delta_prior)
 
             if move:
                 logging.debug(f"Move_center accepted in element {ni}")
@@ -417,6 +507,7 @@ class BaseImageReconstructor:
 
             # store the results
             self.lls.append(self.current_ll)
+            self.priors.append(self.current_logprior) 
             self.temps.append(self.temp)
             self.post_locs = np.concatenate((self.post_locs, self.locs))
             
@@ -450,7 +541,10 @@ class CouplingMapImageReconstructor(BaseImageReconstructor):
                  ini_temp = 1,
                  ini_method = 'random',
                  seed = 123456,
-                 loglevel = logging.INFO
+                 regul_dict = {},
+                 loglevel = logging.INFO,
+                #  do_entropy_regul = False,
+                #  entropy_regul_coeff = 1e-4
                  ):
         super().__init__(matrix, data, data_err, outname,
                          axis_len = axis_len,
@@ -465,7 +559,11 @@ class CouplingMapImageReconstructor(BaseImageReconstructor):
                          ini_temp = ini_temp,
                          ini_method = ini_method,
                          seed = seed,
+                         regul_dict = regul_dict,
                          loglevel=loglevel)
+        
+        # self.do_entropy_regul = do_entropy_regul
+        # self.entropy_regul_coeff = entropy_regul_coeff
         
     def compute_ll(self, vec):
         '''
@@ -475,6 +573,11 @@ class CouplingMapImageReconstructor(BaseImageReconstructor):
         current_observable = vec
         # chi^2 / 2
         current_ll = np.nansum((current_observable - self.data)**2 / self.data_err**2) / self.ndf / 2
+        
+        # if with_regul:
+        #     if self.do_entropy_regul:
+        #         ent = entropy(vec)
+        #         current_ll += self.entropy_regul_coeff * ent
         return current_ll
 
 import emcee
@@ -491,6 +594,7 @@ class BaseModelFitter:
 
     def __init__(self, matrix, data, data_err, outname,
                  axis_len = 33,
+                 central_point_source_flux = 0,
                 #  gamma = 256,
                 #  tau = 1e4,
                 #  target_chi2 = 1,
@@ -525,6 +629,8 @@ class BaseModelFitter:
 
         self.nwalkers = nwalkers
 
+        self.central_point_source_flux = central_point_source_flux
+
         logging.basicConfig(level = loglevel, format='%(asctime)s - %(levelname)s - %(message)s')
 
     
@@ -533,7 +639,13 @@ class BaseModelFitter:
         compute the log likelihood of the model given the parameters
         '''
         # raise NotImplementedError("compute_ll must be overridden")
+
         current_observable = self.compute_model_from_params(params)
+
+
+        point_source_flux = self.central_point_source_flux
+        current_observable *= (1-point_source_flux)
+        current_observable += point_source_flux * self.matrix[:, self.center * self.axis_len + self.center]
 
         # -chi^2 / 2
         current_ll = -0.5 * np.nansum((current_observable - self.data)**2 / self.data_err**2) #/ self.ndf / 2
@@ -706,6 +818,7 @@ class GaussianBlobFitter(BaseModelFitter):
     def __init__(self, matrix, data, data_err, outname,
                     axis_len = 33,
                     fix_circular = False,
+                    central_point_source_flux = 0,
                     # n_blobs = 1,
                     burn_in_iter = 200,
                     seed = 123456,
@@ -713,6 +826,7 @@ class GaussianBlobFitter(BaseModelFitter):
                     ):
             super().__init__(matrix, data, data_err, outname,
                             axis_len = axis_len,
+                            central_point_source_flux=central_point_source_flux,
                             # gamma = gamma,
                             # tau = tau,
                             # target_chi2 = target_chi2,
