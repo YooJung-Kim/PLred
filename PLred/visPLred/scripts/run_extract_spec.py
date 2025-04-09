@@ -118,7 +118,7 @@ if __name__ == "__main__":
         out_specs = []
         out_res = []
 
-        for i in range(len(data)):
+        for i in tqdm(range(len(data))):
 
             spec, res = sp.frame_to_spec(data[i] - dark, xmin, xmax, wav_map, matrix, return_residual = True)
             out_specs.append(spec)
