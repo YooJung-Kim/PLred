@@ -248,8 +248,8 @@ def make_interpolation_model(normcube, pos_mas, wav_fitrange, wav_reconrange,
     
     X_poly = poly_design_matrix(x_flat, y_flat, poly_deg_spatial)
 
-    
-    for specind in (wav_reconrange):
+    _wav_fitrange_inds = []
+    for ii, specind in enumerate(wav_reconrange):
 
         map_data = normcube[:,:,specind] # cube[:,:,specind] / np.nansum(cube[:,:,specind])
         weight = 1/variance_map[:,:,specind]
@@ -281,20 +281,26 @@ def make_interpolation_model(normcube, pos_mas, wav_fitrange, wav_reconrange,
         all_map_input.append(map_input)
 
         all_coeffs.append(coeffs)
-
+        if specind in wav_fitrange:
+            _wav_fitrange_inds.append(ii)
+    
+    _wav_fitrange_inds = np.array(_wav_fitrange_inds)
 
     all_coeffs = np.array(all_coeffs)
     modeled_coeffs = np.zeros_like(all_coeffs)
 
-    for coeff_ind in range(np.shape(all_coeffs)[1]):
+    _wav_reconrange_inds = []
+    for ii, coeff_ind in enumerate(range(np.shape(all_coeffs)[1])):
 
-        poly = np.polyfit(wav_fitrange, all_coeffs[wav_fitrange,coeff_ind], deg = poly_deg_spectral)
+        poly = np.polyfit(wav_fitrange, all_coeffs[_wav_fitrange_inds,coeff_ind], deg = poly_deg_spectral)
         modeled_coeff = np.poly1d(poly)(wav_reconrange)
         modeled_coeffs[:,coeff_ind] = modeled_coeff
+        _wav_reconrange_inds.append(ii)
 
     modeled_recon = []
-    for specind in (wav_reconrange):
-        recon = np.dot(X_poly, modeled_coeffs[specind])
+    for ii, specind in enumerate(wav_reconrange):
+        recon = np.dot(X_poly, modeled_coeffs[ii])
+        # recon = np.dot(X_poly, modeled_coeffs[specind])
         modeled_recon.append(recon.reshape((len(pos_mas), len(pos_mas))))
 
     modeled_recon = np.array(modeled_recon)
@@ -427,7 +433,7 @@ class CouplingMapModel:
         self.all_modeled_recons = all_modeled_recons
 
         # compute chi2
-        self.model_chi2 = (all_map_inputs - all_modeled_recons)**2 / self.datanormvar
+        self.model_chi2 = (all_map_inputs - all_modeled_recons)**2 / self.datanormvar[:,:,:,wav_reconrange]
 
         if output_name is not None:
             hdu = fits.PrimaryHDU(all_modeled_coeffs)
@@ -443,7 +449,7 @@ class CouplingMapModel:
             hdu.header['MAX_WAV'] = max(wav_reconrange)
 
             ## adding mask here
-            mask = ~np.isnan(self.datavar)
+            mask = ~np.isnan(self.datavar[:,:,:,wav_reconrange])
 
             hdu2 = fits.ImageHDU(all_map_inputs * mask)
             hdu2.header['EXTNAME'] = 'data'
@@ -460,6 +466,9 @@ class CouplingMapModel:
             hdulist = fits.HDUList([hdu, hdu2, hdu3, hdu4, hdu5])
             hdulist.writeto(output_name+'.fits', overwrite=True)
             print(output_name+'.fits saved')
+
+        self.all_map_inputs = all_map_inputs
+        self.all_modeled_coeffs = all_modeled_coeffs
         
         return all_map_inputs, all_modeled_recons, all_modeled_coeffs, self.model_chi2
 
@@ -523,3 +532,33 @@ class CouplingMapModel:
         return np.sum(summat, axis = 0) / all_weights
         
     
+
+    def diagnostic_plot_model(self, fibind): #, specinds):
+
+        from matplotlib.animation import FuncAnimation
+
+        fig, axs = plt.subplots(ncols=3, figsize=(10,3))
+
+        def animate(specind):
+
+            for ax in axs: ax.clear()
+            p=axs[0].imshow(self.all_map_inputs[:,:,fibind,specind],vmin=0,vmax=0.02, origin='lower',
+                        extent = (min(self.pos_mas), max(self.pos_mas), min(self.pos_mas), max(self.pos_mas)))
+            axs[1].imshow(self.all_modeled_recons[:,:,fibind,specind],vmin=0,vmax=0.02, origin='lower',
+                        extent = (min(self.pos_mas), max(self.pos_mas), min(self.pos_mas), max(self.pos_mas)))
+            axs[2].imshow(self.all_map_inputs[:,:,fibind,specind] - self.all_modeled_recons[:,:,fibind,specind],vmin=-0.002,vmax=0.002,cmap='turbo',
+                        origin='lower',
+                        extent = (min(self.pos_mas), max(self.pos_mas), min(self.pos_mas), max(self.pos_mas)))
+            # axs[3].imshow((all_map_input[specind]-modeled_recon[specind]),vmin=-0.001,vmax=0.001,cmap='RdBu')
+            fig.suptitle('specind %d' % specinds[specind])
+
+            axs[0].set_title('data')
+            axs[1].set_title('model')
+            axs[2].set_title('residual')
+
+            return p
+        
+        specinds = np.arange(np.shape(self.all_map_inputs)[3])
+        anim = FuncAnimation(fig, animate, specinds, interval = 100)
+
+        return anim
