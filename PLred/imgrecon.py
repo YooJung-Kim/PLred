@@ -667,6 +667,16 @@ class BaseModelFitter:
         '''
         raise NotImplementedError("compute_model_from_params must be overridden")
     
+    def run_optimization(self, ini_params, bounds = None):
+
+        from scipy.optimize import minimize
+
+        allopt = minimize(lambda x: -self.compute_ll(x), ini_params,
+                method='L-BFGS-B', bounds=bounds)
+        self.opt = allopt
+        return allopt.x
+        
+    
     def run_chain(self, niter, ini_params, ini_ball_size = 1e-3, plot_every=100):
 
         self.plot_every = plot_every

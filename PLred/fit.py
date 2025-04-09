@@ -207,11 +207,14 @@ class PLMapFit:
 
     #     self.rc.plot_diagnostic()
 
-    def run_mcmc_pointsource(self, n_point_sources, ini_params, ini_ball_size = 0.1,
-                             niter = 1000, 
-                             burn_in_iter=100, 
-                             seed=12345, 
-                             plot_every = 500):
+    def run_fitting_pointsource(self, n_point_sources, ini_params,
+                                mcmc = False,
+                                bounds = None,
+                                ini_ball_size = 0.1,
+                                niter = 1000, 
+                                burn_in_iter=100, 
+                                seed=12345, 
+                                plot_every = 500):
 
         self.rc = PointSourceFitter(self.mat.T, self.observed, self.observed_err, 'pointsouce_test',
                                                 axis_len = self.mapmodel.image_ngrid,
@@ -225,11 +228,18 @@ class PLMapFit:
                                                 # target_chi2= self.target_chi2
                                             
                                                 )
-        self.rc.run_chain(niter, ini_params, ini_ball_size, plot_every = plot_every)
+        if mcmc:
+            self.rc.run_chain(niter, ini_params, ini_ball_size, plot_every = plot_every)
+        else:
 
+            self.rc.run_optimization(ini_params, bounds = bounds)
+        
         return self.rc
     
-    def run_mcmc_gaussian(self, ini_params, ini_ball_size = 0.1,
+    def run_fitting_gaussian(self, ini_params, 
+                             mcmc = False,
+                             bounds = None,
+                             ini_ball_size = 0.1,
                              niter = 1000, 
                              burn_in_iter=100, 
                              seed=12345, 
@@ -253,8 +263,10 @@ class PLMapFit:
                                                 # target_chi2= self.target_chi2
                                             
                                                 )
-        self.rc.run_chain(niter, ini_params, ini_ball_size, plot_every = plot_every)
-
+        if mcmc:
+            self.rc.run_chain(niter, ini_params, ini_ball_size, plot_every = plot_every)
+        else:
+            self.rc.run_optimization(ini_params, bounds = bounds)
         return self.rc
 
 
