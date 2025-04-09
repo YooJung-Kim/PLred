@@ -839,8 +839,8 @@ class SpectrumModel:
         recons = [recon]
 
         if save_intermediate: 
-            np.save('iter%d_A.npy' % i, A.toarray())
-            np.save('iter%d_ycorr.npy' % i, ycoor_correction_map)
+            self.save_spectra_model('ini')
+
             
         for i in range(n_iter - 1):
             print("constructing matrix for iter %d" % (i+1))
