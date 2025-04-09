@@ -454,10 +454,10 @@ class CouplingMapModel:
             hdu2 = fits.ImageHDU(all_map_inputs * mask)
             hdu2.header['EXTNAME'] = 'data'
 
-            hdu3 = fits.ImageHDU(self.datavar)
+            hdu3 = fits.ImageHDU(self.datavar[:,:,:,wav_reconrange] * mask)
             hdu3.header['EXTNAME'] = 'var'
 
-            hdu4 = fits.ImageHDU(self.datanormvar)
+            hdu4 = fits.ImageHDU(self.datanormvar[:,:,:,wav_reconrange] * mask)
             hdu4.header['EXTNAME'] = 'normvar'
 
             hdu5 = fits.ImageHDU(self.model_chi2)
