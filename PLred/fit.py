@@ -239,6 +239,7 @@ class PLMapFit:
     def run_fitting_gaussian(self, ini_params, 
                              mcmc = False,
                              bounds = None,
+                             central_point_source_flux = 0,
                              ini_ball_size = 0.1,
                              niter = 1000, 
                              burn_in_iter=100, 
@@ -261,7 +262,7 @@ class PLMapFit:
                                                 seed = seed,
                                                 # n_element= self.n_elemenet,
                                                 # target_chi2= self.target_chi2
-                                            
+                                                central_point_source_flux= central_point_source_flux
                                                 )
         if mcmc:
             self.rc.run_chain(niter, ini_params, ini_ball_size, plot_every = plot_every)

@@ -80,6 +80,10 @@ if __name__ == "__main__":
     output_dir = config['Outputs']['output_dir']
     spec_model_name = config['Spec']['spec_model']
 
+    flatfile = config['Inputs']['flat']
+    if flatfile.strip() != '':
+        flat = fits.getdata(flatfile)
+
 
     # Make directories
     os.makedirs(output_dir+name, exist_ok=True)
@@ -120,7 +124,12 @@ if __name__ == "__main__":
 
         for i in tqdm(range(len(data))):
 
-            spec, res = sp.frame_to_spec(data[i] - dark, xmin, xmax, wav_map, matrix, return_residual = True)
+            if flatfile.strip() != '':
+                frame = (data[i] - dark) / flat
+            else:
+                frame = data[i] - dark
+
+            spec, res = sp.frame_to_spec(frame, xmin, xmax, wav_map, matrix, return_residual = True)
             out_specs.append(spec)
             out_res.append(res)
 
@@ -129,6 +138,7 @@ if __name__ == "__main__":
         hdu = fits.PrimaryHDU(np.array(out_specs))
         hdu.header['dark'] = output_dir+name+'/dark.fits'
         hdu.header['model'] = spec_model_name
+        hdu.header['flat'] = flatfile
         # add more info here, related to extraction params
         # np.save(output_dir+name+'/'+file.split('/')[-1].split('.fits')[0]+'_spec.npy', out_specs)
         hdu.writeto(output_dir+name+'/'+file.split('/')[-1].split('.fits')[0]+'_spec.fits', overwrite=True)
