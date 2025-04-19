@@ -220,3 +220,68 @@ def plot_coupling_maps(couplingmap_file, outname, norm = False, fnumber = 8,
     axs[39].set_ylabel('y (mas)')
 
     fig.savefig(outname+'.png')
+
+
+def normalize_flatten(cube):
+
+    if len(np.shape(cube)) == 2:
+        cube = np.array([cube])
+    
+    sumspec = np.sum(cube, axis=1)
+
+    flattened_cube = []
+
+    for frameind in range(len(cube)):
+
+        flattened_cube.append(np.array([cube[frameind][fibind] / sumspec[frameind] for fibind in range(38)]).flatten())
+
+    return np.array(flattened_cube), sumspec
+
+
+from sklearn.decomposition import PCA
+import time
+
+
+def normspec_PCA(datadir, obs_start, obs_end,
+                 clip_sigma = 5, n_components = 50):
+    
+    specfiles = find_data_between(datadir, obs_start, obs_end,
+                                  footer = '_spec.fits')
+
+    all_data = []
+    
+    all_sumspec = []
+    for i in tqdm(np.arange(len(specfiles))):
+        cube = fits.getdata(specfiles[i])
+
+        normcube, sumspec = normalize_flatten(cube)
+        all_data.append(normcube)
+        all_sumspec.append(np.sum(sumspec, axis=1))
+
+        if i == 0:
+            spec = np.sum(sumspec, axis=0)
+        else:
+            spec += np.sum(sumspec, axis=0)
+
+    # clip
+    all_sumspec = np.array(all_sumspec).flatten()
+    # all_sumspec = all_sumspec.reshape(-1, all_sumspec.shape[-1])
+    
+    all_data = np.array(all_data)
+    all_data = all_data.reshape(-1, all_data.shape[-1])
+
+    meanspec = np.mean(all_sumspec, axis=0)
+    stdspec = np.std(all_sumspec, axis=0)
+
+    idx = (all_sumspec < meanspec + clip_sigma * stdspec) & (all_sumspec > meanspec - clip_sigma * stdspec)
+    all_data = all_data[idx]
+
+    print('number of frames:', len(all_data))
+
+    start = time.time()
+    pca = PCA(n_components = n_components)
+    pca.fit_transform(all_data)
+    end = time.time()
+    print('time elapsed: %.2f seconds' % (end - start))
+
+    return pca, spec
