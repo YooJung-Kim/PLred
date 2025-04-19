@@ -840,6 +840,8 @@ class GaussianBlobFitter(BaseModelFitter):
     def __init__(self, matrix, data, data_err, outname,
                     axis_len = 33,
                     fix_circular = False,
+                    fix_PA = False,
+                    fix_PA_value = 0,
                     central_point_source_flux = 0,
                     # n_blobs = 1,
                     burn_in_iter = 200,
@@ -862,11 +864,18 @@ class GaussianBlobFitter(BaseModelFitter):
             self.xg, self.yg = np.meshgrid(xa, xa)
 
             self.fix_circular = fix_circular
-    
+            self.fix_PA = fix_PA
+            self.fix_PA_value = fix_PA_value
+
     def compute_model_from_params(self, params):
 
         if not self.fix_circular:
-            [x, y, sigma_x, sigma_y, theta] = params
+
+            if not self.fix_PA:
+                [x, y, sigma_x, sigma_y, theta] = params
+            else:
+                [x, y, sigma_x, sigma_y] = params
+                theta = self.fix_PA_value
         else:
             [x, y, sigma] = params
 
@@ -937,11 +946,12 @@ class GaussianBlobFitter(BaseModelFitter):
                 logging.debug("sigma_y too small")
                 params[3] = self.min_sigma
 
-            if params[2] > params[3]:
-                logging.debug("swap sigma")
-                params[2], params[3] = params[3], params[2]
-                params[4] += np.pi/2
-                # params = [x, y, sigma_x, sigma_y, theta]
+            if not self.fix_PA:
+                if params[2] > params[3]:
+                    logging.debug("swap sigma")
+                    params[2], params[3] = params[3], params[2]
+                    params[4] += np.pi/2
+                    # params = [x, y, sigma_x, sigma_y, theta]
 
         # if sigma_x < 0 or sigma_y < 0:
         #     logging.info("negative sigma")
@@ -955,13 +965,14 @@ class GaussianBlobFitter(BaseModelFitter):
         
         # check if position angle is within bounds
         if not self.fix_circular:
-            if params[4] < -np.pi/2:
-                params[4] += np.pi
-            
-            if params[4] > np.pi/2:
-                params[4] -= np.pi
-                # logging.info("theta out of bounds")
-                # return -np.inf
+            if not self.fix_PA:
+                if params[4] < -np.pi/2:
+                    params[4] += np.pi
+                
+                if params[4] > np.pi/2:
+                    params[4] -= np.pi
+                    # logging.info("theta out of bounds")
+                    # return -np.inf
             
             
         return super().compute_ll(params)

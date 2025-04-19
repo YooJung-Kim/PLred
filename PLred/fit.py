@@ -239,22 +239,41 @@ class PLMapFit:
     def run_fitting_gaussian(self, ini_params, 
                              mcmc = False,
                              bounds = None,
+                             fix_PA_value = None,
                              central_point_source_flux = 0,
                              ini_ball_size = 0.1,
                              niter = 1000, 
                              burn_in_iter=100, 
                              seed=12345, 
                              plot_every = 500):
+        '''
+        Run fitting for a Gaussian blob model.
+        
+        For circular gaussian fit, ini_params = [x, y, sigma]
+        For elliptical gaussian fit, ini_params = [x, y, sigma_x, sigma_y, PA]
+        For elliptical gaussian fit with fixed PA, ini_params = [x, y, sigma_x, sigma_y]
+        If fix_PA_value is provided, it will be used as the fixed PA value.
+        If ini_params has 3 elements, it will be treated as circular gaussian fit.
+        If ini_params has 4 elements, it will be treated as elliptical gaussian fit with fixed PA.
+        If ini_params has 5 elements, it will be treated as elliptical gaussian fit.
+        
+        '''
 
         if len(ini_params) == 5:
             fix_circular = False
+            fix_PA = False
         elif len(ini_params) == 3:
             fix_circular = True
+        elif len(ini_params) == 4:
+            fix_circular = False
+            fix_PA = True
         else:
             raise ValueError("ini_params should have 3 or 5 elements")
         self.rc = GaussianBlobFitter(self.mat.T, self.observed, self.observed_err, 'gaussianblob_test',
                                                 axis_len = self.mapmodel.image_ngrid,
                                                 fix_circular= fix_circular,
+                                                fix_PA = fix_PA,
+                                                fix_PA_value = fix_PA_value,
                                                 # ini_temp= self.ini_temp,
                                                 # tau = self.tau,
                                                 burn_in_iter= burn_in_iter,
