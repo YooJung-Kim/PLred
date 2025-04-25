@@ -94,7 +94,7 @@ class BaseImageReconstructor:
 
         # convergence parameters
         self.burn_in_iter = burn_in_iter
-        self.ndf = ndf if ndf is not None else len(data)
+        self.ndf = ndf if ndf is not None else np.sum(np.isfinite(data_err))
         self.ini_seed = seed
         self.ini_method = ini_method
         np.random.seed(seed)
@@ -611,6 +611,7 @@ class BaseModelFitter:
         self.data = data
         self.data_err = data_err
         self.len_vec = np.shape(matrix)[0]
+        self.ndf = np.sum(np.isfinite(data_err)) # number of degrees of freedom
 
         # image parameters
         self.axis_len = axis_len
@@ -652,7 +653,7 @@ class BaseModelFitter:
         current_observable += point_source_flux * self.matrix[:, self.center * self.axis_len + self.center]
 
         # -chi^2 / 2
-        current_ll = -0.5 * np.nansum((current_observable - self.data)**2 / self.data_err**2) #/ self.ndf / 2
+        current_ll = -0.5 * np.nansum((current_observable - self.data)**2 / self.data_err**2) / self.ndf #/ 2
         self._n += 1
         if (self.plot_every is not None) and (self._n % self.plot_every == 0):
             self.current_ll = current_ll

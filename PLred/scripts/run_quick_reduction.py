@@ -167,8 +167,8 @@ if __name__ == "__main__":
                 datavar = fitter.mapmodel.datanormvar[n:-n,n:-n,fibind,specind]
 
                 chi2 += np.nansum((model-data)**2 / datavar)
-            
-            return chi2/len(model.flatten())/len(fibinds)
+                ndf = np.sum(np.isfinite(datavar))
+            return chi2/ndf/len(fibinds)
         
         all_opts = []
         all_funs = []
@@ -178,6 +178,7 @@ if __name__ == "__main__":
 
             allopt = minimize(chi2_model_point, x0=[0,0], args=(specind - specinds[0],np.arange(38)))
             all_opts.append(allopt.x)
+            all_funs.append(allopt.fun)
 
             result_specinds.append(specind)
             print('start specind', specind, "using all: (%.3f, %.3f)" % (allopt.x[0], allopt.x[1]))

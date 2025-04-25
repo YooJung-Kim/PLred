@@ -264,6 +264,7 @@ class PLMapFit:
             fix_PA = False
         elif len(ini_params) == 3:
             fix_circular = True
+            fix_PA = False
         elif len(ini_params) == 4:
             fix_circular = False
             fix_PA = True
