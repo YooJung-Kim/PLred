@@ -168,10 +168,11 @@ if __name__ == "__main__":
 
                 chi2 += np.nansum((model-data)**2 / datavar)
                 ndf = np.sum(np.isfinite(datavar))
-            return chi2/ndf/len(fibinds)
+            return chi2/ndf/len(fibinds)/2
         
         all_opts = []
         all_funs = []
+        reference_funs = []
         result_specinds = []
         bootstrap_opts = []
         for specind in wav_to_use:
@@ -179,6 +180,10 @@ if __name__ == "__main__":
             allopt = minimize(chi2_model_point, x0=[0,0], args=(specind - specinds[0],np.arange(38)))
             all_opts.append(allopt.x)
             all_funs.append(allopt.fun)
+            reffun = chi2_model_point([0,0], specind - specinds[0], np.arange(38))
+            reference_funs.append(reffun)
+            print("reference fun for specind %d: %.3f" % (specind, reffun))
+            print("optimized fun for specind %d: %.3f" % (specind, allopt.fun))
 
             result_specinds.append(specind)
             print('start specind', specind, "using all: (%.3f, %.3f)" % (allopt.x[0], allopt.x[1]))
@@ -249,6 +254,7 @@ if __name__ == "__main__":
                     result_specinds = result_specinds,
                     all_opts = all_opts,
                     all_funs = all_funs,
+                    reference_funs = reference_funs,
                     boostrap_samples = bootstrap_samples,
                     # bootstrap_funs = bootstrap_funs
                     )
