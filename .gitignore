@@ -188,3 +188,5 @@ PLred/examples/example_model_fitting/circle_fitting_results/
 PLred/examples/example_model_fitting/disk_fitting/
 
 PLred/examples/example_model_fitting/scratch*
+PLred/scripts/*.png
+PLred/scripts/*.gif
