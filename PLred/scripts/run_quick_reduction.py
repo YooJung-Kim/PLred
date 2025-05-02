@@ -161,14 +161,17 @@ if __name__ == "__main__":
             chi2 = 0
             (x,y) = param
             # print(x,y)
+            ndfs = 0
             for fibind in fibinds:
                 model = fitter.mapmodel.compute_vec(specind, fibind, x, y, n_trim=n).reshape((matsize,matsize))
                 data = fitter.mapmodel.normdata[n:-n,n:-n,fibind,specind]
                 datavar = fitter.mapmodel.datanormvar[n:-n,n:-n,fibind,specind]
 
                 chi2 += np.nansum((model-data)**2 / datavar)
-                ndf = np.sum(np.isfinite(datavar))
-            return chi2/ndf/len(fibinds)/2
+                ndfs += np.sum(np.isfinite(datavar))
+                # print(np.shape(datavar), np.sum(np.isfinite(datavar)))
+            ndfs -= len(param)
+            return chi2/ndfs/2
         
         all_opts = []
         all_funs = []

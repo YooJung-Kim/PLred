@@ -95,6 +95,7 @@ class BaseImageReconstructor:
         # convergence parameters
         self.burn_in_iter = burn_in_iter
         self.ndf = ndf if ndf is not None else np.sum(np.isfinite(data_err))
+        self.ndf_cor = self.ndf - n_element # corrected degrees of freedom
         self.ini_seed = seed
         self.ini_method = ini_method
         np.random.seed(seed)
@@ -572,7 +573,7 @@ class CouplingMapImageReconstructor(BaseImageReconstructor):
         '''
         current_observable = vec
         # chi^2 / 2
-        current_ll = np.nansum((current_observable - self.data)**2 / self.data_err**2) / self.ndf / 2
+        current_ll = np.nansum((current_observable - self.data)**2 / self.data_err**2) / self.ndf_cor / 2
         
         # if with_regul:
         #     if self.do_entropy_regul:
@@ -653,7 +654,7 @@ class BaseModelFitter:
         current_observable += point_source_flux * self.matrix[:, self.center * self.axis_len + self.center]
 
         # -chi^2 / 2
-        current_ll = -0.5 * np.nansum((current_observable - self.data)**2 / self.data_err**2) / self.ndf #/ 2
+        current_ll = -0.5 * np.nansum((current_observable - self.data)**2 / self.data_err**2) / (self.ndf - len(params)) #/ 2
         self._n += 1
         if (self.plot_every is not None) and (self._n % self.plot_every == 0):
             self.current_ll = current_ll
