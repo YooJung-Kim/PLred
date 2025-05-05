@@ -82,6 +82,14 @@ if __name__ == "__main__":
                 anim = mapmodel.diagnostic_plot_model(fibind)#, wav_reconrange)
                 anim.save(output_dir + output_name + f'/polymodel_plots/fibind_{fibind}.gif')
 
+        os.makedirs(output_dir + output_name + '/polymodel_plots_residuals/', exist_ok=True)
+        for i, specind in enumerate(specinds):
+            fig = mapmodel.diagnostic_plot_residuals(i)
+            fig.savefig(output_dir + output_name + f'/polymodel_plots_residuals/specind_{specind}.png')
+
+            fig = mapmodel.diagnostic_plot_SN(i)
+            fig.savefig(output_dir + output_name + f'/polymodel_plots_residuals/specind_{specind}_SN.png')
+
 
     ##########################
     # make convolution matrix

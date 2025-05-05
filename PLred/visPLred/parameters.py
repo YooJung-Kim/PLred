@@ -12,6 +12,8 @@ firstcam_params = {
     'resolving_power' : 3000, # spectrograph resolving power for sim.py
     'gain'          : 0.1, # e- / ADU
     'readnoise'     : 0.45, # e-
+    'size_y'        : 412, # size of the detector in pixels
+    'size_x'        : 1896, # size of the detector in pixels
 }
 
 palila_params = {

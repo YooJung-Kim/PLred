@@ -229,8 +229,14 @@ def frame_to_spec(frame, xmin, xmax, wavmap = None,
     if matrix is not None:
         # do optimal extraction
         imvec = flatten_im(frame, xmin, xmax)
-        if imvar is not None: imvar_vec = flatten_im(imvar, xmin, xmax)
-        else: imvar_vec = None
+        if imvar is not None: 
+            imvar_vec = flatten_im(imvar, xmin, xmax)
+        else: 
+            imvar_vec = None
+        if badpix is not None:
+            badpix = flatten_im(badpix, xmin, xmax)
+        else:
+            badpix = None
         spec, recon = extract_spec_optimal(matrix, imvec, imvar = imvar_vec, badpix = badpix, var_const = var_const, thresh = thresh)
         spec = vec_to_mat(spec)
     else:

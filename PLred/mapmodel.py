@@ -7,98 +7,98 @@ from tqdm import tqdm
 
 
 
-class Ring:
-    def __init__(self, radius, vrot, num_points, position_angle=0,
-                 incl_angle = 0, center = (0,0), weight_array = None
-                 ):
-        """
-        Parameters:
-        - radius: radius of the ring
-        - vrot: rotation velocity of the ring
-        - num_points: number of points to approximate the ellipse
-        - position_angle: position angle of the ellipse in radians
-        - incl_angle: inclination angle of the ellipse in radians
-        - center: tuple of (x, y) coordinates for the center of the ellipse
-        - weight_array: optional array of weights for each point
-        """
+# class Ring:
+#     def __init__(self, radius, vrot, num_points, position_angle=0,
+#                  incl_angle = 0, center = (0,0), weight_array = None
+#                  ):
+#         """
+#         Parameters:
+#         - radius: radius of the ring
+#         - vrot: rotation velocity of the ring
+#         - num_points: number of points to approximate the ellipse
+#         - position_angle: position angle of the ellipse in radians
+#         - incl_angle: inclination angle of the ellipse in radians
+#         - center: tuple of (x, y) coordinates for the center of the ellipse
+#         - weight_array: optional array of weights for each point
+#         """
 
-        self.num_points = num_points
-        self.theta = self._generate_azimuthal_grid()
-        self.center = center
-        self.radius = radius
-        self.vrot = vrot
-        self.angle = position_angle
-        self.incl_angle = incl_angle
-        self.points = self._generate_points(weight_array=weight_array)
+#         self.num_points = num_points
+#         self.theta = self._generate_azimuthal_grid()
+#         self.center = center
+#         self.radius = radius
+#         self.vrot = vrot
+#         self.angle = position_angle
+#         self.incl_angle = incl_angle
+#         self.points = self._generate_points(weight_array=weight_array)
 
 
-    def _generate_azimuthal_grid(self):
-        """
-        Generate azimuthal grid points
+#     def _generate_azimuthal_grid(self):
+#         """
+#         Generate azimuthal grid points
 
-        Returns:
-        - List of azimuthal angles
-        """
-        return np.linspace(0, 2 * np.pi, self.num_points)
+#         Returns:
+#         - List of azimuthal angles
+#         """
+#         return np.linspace(0, 2 * np.pi, self.num_points)
     
-    def _generate_points(self, weight_array = None):
-        """
-        Generate points
+#     def _generate_points(self, weight_array = None):
+#         """
+#         Generate points
 
-        Returns:
-        - List of (x, y) tuples representing points on the ellipse
-        """
+#         Returns:
+#         - List of (x, y) tuples representing points on the ellipse
+#         """
        
-        x = self.radius * np.cos(self.theta)
-        y = self.radius * np.sin(self.theta)
+#         x = self.radius * np.cos(self.theta)
+#         y = self.radius * np.sin(self.theta)
 
-        mat = np.array([[np.cos(self.angle) * np.cos(self.incl_angle), np.sin(self.angle) * np.cos(self.incl_angle)], 
-                    [-np.sin(self.angle), np.cos(self.angle)]]) / np.cos(self.incl_angle)
-        [x_rot, y_rot] = (np.linalg.inv(mat) @ (np.array([x,y]))) 
+#         mat = np.array([[np.cos(self.angle) * np.cos(self.incl_angle), np.sin(self.angle) * np.cos(self.incl_angle)], 
+#                     [-np.sin(self.angle), np.cos(self.angle)]]) / np.cos(self.incl_angle)
+#         [x_rot, y_rot] = (np.linalg.inv(mat) @ (np.array([x,y]))) 
         
-        x_final = self.center[0] + x_rot
-        y_final = self.center[1] + y_rot
+#         x_final = self.center[0] + x_rot
+#         y_final = self.center[1] + y_rot
 
-        vels = self.vrot * np.sin(self.incl_angle) * (np.cos(self.angle) * x_rot + np.sin(self.angle) * y_rot) / self.radius
+#         vels = self.vrot * np.sin(self.incl_angle) * (np.cos(self.angle) * x_rot + np.sin(self.angle) * y_rot) / self.radius
         
-        if weight_array is None:
-            weights = np.ones(self.num_points)
-        else:
-            weights = weight_array
-            assert len(weights) == self.num_points, "Length of weight array must match number of points"
+#         if weight_array is None:
+#             weights = np.ones(self.num_points)
+#         else:
+#             weights = weight_array
+#             assert len(weights) == self.num_points, "Length of weight array must match number of points"
 
-        return list(zip(x_final, y_final, vels, weights))
+#         return list(zip(x_final, y_final, vels, weights))
 
-    def get_points(self, vmin=None, vmax = None):
-        """
-        Get the points
+#     def get_points(self, vmin=None, vmax = None):
+#         """
+#         Get the points
 
-        Returns:
-        - List of (x, y, v) tuples representing points on the ellipse
-        """
-        if ((vmin == None) and (vmax == None)):
-            return self.points
+#         Returns:
+#         - List of (x, y, v) tuples representing points on the ellipse
+#         """
+#         if ((vmin == None) and (vmax == None)):
+#             return self.points
         
-        else:
-            if vmin is None: vmin = -np.inf
-            if vmax is None: vmax = np.inf
-            return [p for p in self.points if (p[2] >= vmin) and (p[2] <= vmax)]
+#         else:
+#             if vmin is None: vmin = -np.inf
+#             if vmax is None: vmax = np.inf
+#             return [p for p in self.points if (p[2] >= vmin) and (p[2] <= vmax)]
 
 
 
-    def plot(self, vmin = None, vmax = None):
-        """
-        Plot the ellipse
-        """
-        points = np.array(self.get_points(vmin, vmax))
-        if len(points) == 0:
-            raise ValueError("No points to plot")
+#     def plot(self, vmin = None, vmax = None):
+#         """
+#         Plot the ellipse
+#         """
+#         points = np.array(self.get_points(vmin, vmax))
+#         if len(points) == 0:
+#             raise ValueError("No points to plot")
         
-        plt.figure()
-        plt.scatter(points[:, 0], points[:, 1], c=points[:,2], s=points[:,3], cmap='viridis')
-        plt.colorbar(label='velocity')
-        plt.gca().set_aspect('equal', adjustable='box')
-        plt.show()
+#         plt.figure()
+#         plt.scatter(points[:, 0], points[:, 1], c=points[:,2], s=points[:,3], cmap='viridis')
+#         plt.colorbar(label='velocity')
+#         plt.gca().set_aspect('equal', adjustable='box')
+#         plt.show()
 
 
 
@@ -235,6 +235,37 @@ def poly_design_matrix(x, y, degree):
 def make_interpolation_model(normcube, pos_mas, wav_fitrange, wav_reconrange, 
                              poly_deg_spatial = 7, poly_deg_spectral = 7,
                              variance_map = None, weighted = True):
+    '''
+    Make a polynomial interpolation model for the coupling map data.
+
+    Parameters
+    ----------
+    normcube : np.ndarray
+        normalized cube data with shape (n_x, n_y, n_wav)
+    pos_mas : np.ndarray
+        positions in milliarcseconds (mas) for the spatial grid
+    wav_fitrange : list
+        wavelength range for fitting the polynomial
+    wav_reconrange : list
+        wavelength range for reconstructing the polynomial
+    poly_deg_spatial : int
+        degree of the polynomial in spatial direction
+    poly_deg_spectral : int
+        degree of the polynomial in spectral direction
+    variance_map : np.ndarray, optional
+        variance map for weighted least squares, should have the same shape as normcube
+    weighted : bool
+        if True, use weighted least squares
+
+    Returns
+    -------
+    modeled_coeffs : np.ndarray
+        coefficients of the polynomial model with shape (n_wav, n_coeffs)
+    modeled_recon : np.ndarray
+        reconstructed data with shape (n_x, n_y, n_wav)
+    all_map_input : np.ndarray
+        input data for the polynomial model with shape (n_x, n_y, n_wav)
+    '''
 
     if weighted is True: assert variance_map is not None, "for weighted least squares, variance map should be given"
 
@@ -250,6 +281,7 @@ def make_interpolation_model(normcube, pos_mas, wav_fitrange, wav_reconrange,
 
     _wav_fitrange_inds = []
     for ii, specind in enumerate(wav_reconrange):
+        # iterate over the spectral indices in the recon range
 
         map_data = normcube[:,:,specind] # cube[:,:,specind] / np.nansum(cube[:,:,specind])
         weight = 1/variance_map[:,:,specind]
@@ -279,7 +311,8 @@ def make_interpolation_model(normcube, pos_mas, wav_fitrange, wav_reconrange,
 
         all_recon_data.append(recon)
         all_map_input.append(map_input)
-
+        
+        # store the coefficients
         all_coeffs.append(coeffs)
         if specind in wav_fitrange:
             _wav_fitrange_inds.append(ii)
@@ -291,7 +324,7 @@ def make_interpolation_model(normcube, pos_mas, wav_fitrange, wav_reconrange,
 
     _wav_reconrange_inds = []
     for ii, coeff_ind in enumerate(range(np.shape(all_coeffs)[1])):
-
+        # polynomial fit of the coefficients along the wavelength range (fitrange) and store the interpolated coefficients in reconrange
         poly = np.polyfit(wav_fitrange, all_coeffs[_wav_fitrange_inds,coeff_ind], deg = poly_deg_spectral)
         modeled_coeff = np.poly1d(poly)(wav_reconrange)
         modeled_coeffs[:,coeff_ind] = modeled_coeff
@@ -299,6 +332,7 @@ def make_interpolation_model(normcube, pos_mas, wav_fitrange, wav_reconrange,
 
     modeled_recon = []
     for ii, specind in enumerate(wav_reconrange):
+        # compute the modeled reconstruction for each spectral index in the recon range
         recon = np.dot(X_poly, modeled_coeffs[ii])
         # recon = np.dot(X_poly, modeled_coeffs[specind])
         modeled_recon.append(recon.reshape((len(pos_mas), len(pos_mas))))
@@ -321,10 +355,29 @@ def make_interpolation_model(normcube, pos_mas, wav_fitrange, wav_reconrange,
 
 class CouplingMapModel:
 
+    '''
+    Coupling map model class
+    Either creates a model from the mapdata or loads a model from a fits file.
+
+    '''
+
 
     def __init__(self, mapdata = None, model = None,
                  min_nframes = 5):
 
+        '''
+        Initialize the CouplingMapModel class.
+        Either loads the mapdata fits file or the model fits file.
+            
+        Parameters
+        ----------
+        mapdata : str, optional
+            path to the mapdata fits file
+        model : str, optional
+            path to the model fits file
+        min_nframes : int, optional
+            minimum number of frames to consider a pixel valid, default is 5
+        '''
         self.data = None
         self.datavar = None
         self.datanormvar = None
@@ -469,6 +522,9 @@ class CouplingMapModel:
 
         self.all_map_inputs = all_map_inputs
         self.all_modeled_coeffs = all_modeled_coeffs
+
+        self.wav_reconrange = wav_reconrange
+        self.wav_fitrange = wav_fitrange
         
         return all_map_inputs, all_modeled_recons, all_modeled_coeffs, self.model_chi2
 
@@ -562,3 +618,37 @@ class CouplingMapModel:
         anim = FuncAnimation(fig, animate, specinds, interval = 100)
 
         return anim
+    
+    def diagnostic_plot_residuals(self, specind, ncols=5):
+
+        fig, axs = plt.subplots(ncols = ncols, nrows = int(np.ceil(self.nfib/ncols)), figsize=(ncols*2, int(np.ceil(self.nfib/ncols)*2)))
+        axs = axs.flatten()
+        for fibind in range(self.nfib):
+            axs[fibind].imshow(self.all_map_inputs[:,:,fibind,specind] - self.all_modeled_recons[:,:,fibind,specind], vmin=-0.002, vmax=0.002, cmap='turbo',
+                        origin='lower',
+                        extent = (min(self.pos_mas), max(self.pos_mas), min(self.pos_mas), max(self.pos_mas)))
+            axs[fibind].set_title('fib %d, count %d' % (fibind, np.nanmedian(self.data[:,:,fibind,self.wav_reconrange[specind]])))
+        for ax in axs[self.nfib:]:
+            ax.axis('off')
+        fig.suptitle('Residuals for specind %d' % specind)
+        fig.tight_layout()
+
+        return fig
+        
+
+    def diagnostic_plot_SN(self, specind, ncols=5):
+
+        fig, axs = plt.subplots(ncols = ncols, nrows = int(np.ceil(self.nfib/ncols)), figsize=(ncols*2, int(np.ceil(self.nfib/ncols)*2)))
+        axs = axs.flatten()
+        for fibind in range(self.nfib):
+            axs[fibind].imshow((self.all_map_inputs[:,:,fibind,specind] - self.all_modeled_recons[:,:,fibind,specind]) / np.sqrt(self.datanormvar[:,:,fibind,self.wav_reconrange[specind]]), vmin=-10, vmax=10, cmap='turbo',
+                        origin='lower',
+                        extent = (min(self.pos_mas), max(self.pos_mas), min(self.pos_mas), max(self.pos_mas)))
+            axs[fibind].set_title('fib %d, count %d' % (fibind, np.nanmedian(self.data[:,:,fibind,self.wav_reconrange[specind]])))
+        for ax in axs[self.nfib:]:
+            ax.axis('off')
+        fig.suptitle('Residuals for specind %d' % specind)
+        fig.tight_layout()
+
+        return fig
+        

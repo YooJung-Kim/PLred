@@ -8,6 +8,7 @@ from .utils import find_data_between
 from ..imageutils import subpixel_centroid_2d
 from .parameters import *
 from scipy.ndimage import center_of_mass
+from tqdm import tqdm
 
 def bin_by_centroids(psfcamframes, firstcamframes, centroids, xbins, ybins):
     '''
@@ -32,6 +33,67 @@ def bin_by_centroids(psfcamframes, firstcamframes, centroids, xbins, ybins):
             firstcam_binned_frames[i,j] = np.mean(firstcamframes[idx], axis=0)
             num_frames[i,j] = np.sum(idx)
     return psfcam_binned_frames, firstcam_binned_frames, num_frames, idxs
+
+def bin_by_centroids_from_indices(psfcamframes, firstcam_file_indices, firstcam_frame_indices, firstcam_files,
+                                  centroids, xbins, ybins):
+    '''
+    Bin frames by centroids, but not from already stored frames.
+    Reads the frames from the firstcam_file_indices and firstcam_frame_indices
+    '''
+    
+    x = centroids[:,0]
+    y = centroids[:,1]
+    ny = firstcam_params['size_y']
+    nx = firstcam_params['size_x']
+    
+    psfcam_binned_frames = np.zeros((len(xbins)-1, len(ybins)-1, psfcamframes.shape[1], psfcamframes.shape[2]))
+    firstcam_binned_frames = np.zeros((len(xbins)-1, len(ybins)-1, ny, nx))
+
+    num_frames = np.zeros((len(xbins)-1, len(ybins)-1))
+    idxs = np.zeros((len(xbins)-1, len(ybins)-1, len(firstcam_file_indices)), dtype=bool)
+
+    for i in range(len(xbins)-1):
+        for j in range(len(ybins)-1):
+            xidx = (x >= xbins[i]) & (x < xbins[i+1])
+            yidx = (y >= ybins[j]) & (y < ybins[j+1])
+            idx = xidx & yidx
+            idxs[i,j] = idx
+            psfcam_binned_frames[i,j] = np.mean(psfcamframes[idx], axis=0)
+            num_frames[i,j] = np.sum(idx)
+    
+    # now read the frames from the firstcam_file_indices and firstcam_frame_indices
+    for fileind, f in tqdm(enumerate(firstcam_files)):
+        
+        # indices that correspond to this file
+        id = (firstcam_file_indices == fileind)
+
+        # frame indices
+        id_frame = firstcam_frame_indices[id] # get the frame indices for this file
+        
+        _dat = fits.getdata(f)
+
+        for i in range(len(id_frame)):
+
+            iy, ix = np.where(idxs[:,:,np.where(id == True)[0][i]] == True) # get the indices of the bin that matches this frame])
+
+            try:
+                # np.where(id == True)[0][i] # get the indices of the frames that match this file
+
+                # idxs[]
+                iy = iy[0]
+                ix = ix[0]
+
+                firstcam_binned_frames[iy,ix,:,:] += _dat[i]
+            except:
+                print(f"Failed to add frame {i} from file {fileind} to bin {iy},{ix}")
+                continue
+
+    # now calculate the mean
+    firstcam_binned_frames = firstcam_binned_frames / num_frames[:,:,None,None]
+    return psfcam_binned_frames, firstcam_binned_frames, num_frames, idxs
+    
+
+
 
 
 def calculate_bootstrap_variance_map(firstcamframes, idxs, nbootstrap = 100,
@@ -115,11 +177,16 @@ class SimultaneousData:
     '''
     Class to handle simultaneous data from two cameras
     '''
+
+    normvar = None
+    var = None
+
     def __init__(self, firstcam_timestamp_path, firstcam_spec_path,
                  obs_start, obs_end,
                  psfcam, 
                  psfcam_frames_name, psfcam_timestamp_name,
-                 match_frames = True):
+                 match_frames = True,
+                 store_spec = True):
         
         '''
         Initialize the class
@@ -160,18 +227,26 @@ class SimultaneousData:
             raise ValueError("psfcam should be either palila or vcam")
         self.psfcam_name = psfcam
 
+        self.store_spec = store_spec
+
         if match_frames:
-            self.match_frames()
+            if store_spec:
+                # stores all the data.
+                # if working with raw FIRSTcam frames, don't use this option.
+                self.match_frames(footer = '_spec.fits')
+            else:
+                self.match_frames(location_only = True, footer = '.fits')
+
 
     
-    def match_frames(self):
+    def match_frames(self, location_only = False, footer = '_spec.fits'):
 
         '''
         Match the frames from the two cameras
         '''
 
         firstcam_timestampfiles = find_data_between(self.firstcam_timestamp_path, self.obs_start, self.obs_end, header='firstpl_', footer='.txt')
-        firstcam_specfiles = find_data_between(self.firstcam_spec_path, self.obs_start, self.obs_end, header='firstpl_', footer='_spec.fits')
+        firstcam_specfiles = find_data_between(self.firstcam_spec_path, self.obs_start, self.obs_end, header='firstpl_', footer=footer)
 
         # load timestamps
         timestamps_matching_spec = np.concatenate([np.genfromtxt(file)[:,4] for file in firstcam_timestampfiles])
@@ -181,20 +256,40 @@ class SimultaneousData:
         with open(self.psfcam_timestamp_name, 'rb') as f:
             psfcam_timestamp = pickle.load(f)
 
-        # append spectrum
-        all_cropped_specs = []
-        for f in firstcam_specfiles:
-            all_cropped_specs.append(fits.getdata(f)[:,:,:])
-        all_cropped_specs = np.vstack(all_cropped_specs)
+        if not location_only:
+            # append spectrum
+            all_cropped_specs = []
+            for f in firstcam_specfiles:
+                all_cropped_specs.append(fits.getdata(f)[:,:,:])
+            all_cropped_specs = np.vstack(all_cropped_specs)
+        
+        else:
+            all_file_indices = []
+            all_frame_indices = []
+            for fi, f in enumerate(firstcam_specfiles):
+                for n in range(fits.getheader(f)['NAXIS3']): #fits.getdata(f).shape[0]):
+                    all_file_indices.append(fi)
+                    all_frame_indices.append(n)
+            all_file_indices = np.array(all_file_indices)
+            all_frame_indices = np.array(all_frame_indices)
+
 
         # validate timestamps
         idx1, idx2 = validate_timestamp_matching(timestamps_matching_spec, (np.array(psfcam_timestamp['timestamps'])))
 
         # filter out the frames that don't match
-        all_cropped_specs = all_cropped_specs[idx1]
-        psfcam_frames = psfcam_frames[idx2]
+        if not location_only:
+            all_cropped_specs = all_cropped_specs[idx1]
+            self.firstcam_frames = all_cropped_specs
 
-        self.firstcam_frames = all_cropped_specs
+        else:
+            all_file_indices = all_file_indices[idx1]
+            all_frame_indices = all_frame_indices[idx1]
+            self.firstcam_file_indices = all_file_indices
+            self.firstcam_frame_indices = all_frame_indices
+            self.firstcam_files = firstcam_specfiles
+
+        psfcam_frames = psfcam_frames[idx2]
         self.psfcam_frames = psfcam_frames
         self.timestamps = np.array(psfcam_timestamp['timestamps'])[idx2]
 
@@ -248,11 +343,21 @@ class SimultaneousData:
         if effective_idx is not None:
             centroids = self.centroids[effective_idx]
             psfcam_frames = self.psfcam_frames[effective_idx]
-            firstcam_frames = self.firstcam_frames[effective_idx]
+            if not self.store_spec:
+                firstcam_file_indices = self.firstcam_file_indices[effective_idx]
+                firstcam_frame_indices = self.firstcam_frame_indices[effective_idx]
+            else:
+                firstcam_frames = self.firstcam_frames[effective_idx]
+
         else:
-            centroids = self.centroids
-            psfcam_frames = self.psfcam_frames
-            firstcam_frames = self.firstcam_frames
+            centroids = self.centroids #[effective_idx]
+            psfcam_frames = self.psfcam_frames #[effective_idx]
+
+            if not self.store_spec:
+                firstcam_file_indices = self.firstcam_file_indices #[effective_idx]
+                firstcam_frame_indices = self.firstcam_frame_indices #[effective_idx]
+            else:
+                firstcam_frames = self.firstcam_frames #[effective_idx]
 
         self.map_n = map_n
         self.map_width = map_width
@@ -266,8 +371,11 @@ class SimultaneousData:
         self.xbins = xbins
         self.ybins = ybins
 
-        self.psfcam_binned_frames, self.firstcam_binned_frames, self.num_frames, self.idxs = bin_by_centroids(psfcam_frames, firstcam_frames, centroids, xbins, ybins)
-
+        if self.store_spec:
+            self.psfcam_binned_frames, self.firstcam_binned_frames, self.num_frames, self.idxs = bin_by_centroids(psfcam_frames, firstcam_frames, centroids, xbins, ybins)
+        else:
+            self.psfcam_binned_frames, self.firstcam_binned_frames, self.num_frames, self.idxs = bin_by_centroids_from_indices(psfcam_frames, firstcam_file_indices, firstcam_frame_indices, self.firstcam_files, centroids, xbins, ybins)
+        
         self.xmin = (xbins[0] - np.nanmedian(centroids[:,0])) * self.pix2mas
         self.xmax = (xbins[-1]  - np.nanmedian(centroids[:,0])) * self.pix2mas
         self.ymin = (ybins[0] - np.nanmedian(centroids[:,1])) * self.pix2mas
@@ -290,6 +398,10 @@ class SimultaneousData:
             else:
                 self.var, self.normvar = calculate_bootstrap_variance_map(firstcam_frames, self.idxs, nbootstrap = nbootstrap)
                 self.bootstrap_samples = None
+        else:
+            self.var = None
+            self.normvar = None
+            self.bootstrap_samples = None
 
     def save(self, filename):
         '''
@@ -311,10 +423,14 @@ class SimultaneousData:
         hdu = fits.PrimaryHDU(self.firstcam_binned_frames, header = header)
         hdu2 = fits.ImageHDU(self.num_frames, name = 'nframes')
         hdu3 = fits.ImageHDU(self.psfcam_binned_frames, name='psfcam')
-        hdu4 = fits.ImageHDU(self.var, name='var')
-        hdu5 = fits.ImageHDU(self.normvar, name='normvar')
+        hdulist = fits.HDUList([hdu, hdu2, hdu3])
+        
+        if self.var is not None:
+            hdu4 = fits.ImageHDU(self.var, name='var')
+            hdu5 = fits.ImageHDU(self.normvar, name='normvar')
+            hdulist.append(hdu4)
+            hdulist.append(hdu5)
 
-        hdulist = fits.HDUList([hdu, hdu2, hdu3, hdu4, hdu5])
         hdulist.writeto(filename, overwrite=True)
         print("Saved to %s" % filename)
 
