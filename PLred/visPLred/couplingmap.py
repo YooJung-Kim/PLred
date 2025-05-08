@@ -34,11 +34,14 @@ def bin_by_centroids(psfcamframes, firstcamframes, centroids, xbins, ybins):
             num_frames[i,j] = np.sum(idx)
     return psfcam_binned_frames, firstcam_binned_frames, num_frames, idxs
 
+
 def bin_by_centroids_from_indices(psfcamframes, firstcam_file_indices, firstcam_frame_indices, firstcam_files,
-                                  centroids, xbins, ybins):
+                                  centroids, xbins, ybins,
+                                  bootstrap = False):
     '''
     Bin frames by centroids, but not from already stored frames.
-    Reads the frames from the firstcam_file_indices and firstcam_frame_indices
+    Reads the frames from the firstcam_file_indices and firstcam_frame_indices.
+    This is useful when the firstcam frames are too large to store in memory.
     '''
     
     x = centroids[:,0]
@@ -50,17 +53,34 @@ def bin_by_centroids_from_indices(psfcamframes, firstcam_file_indices, firstcam_
     firstcam_binned_frames = np.zeros((len(xbins)-1, len(ybins)-1, ny, nx))
 
     num_frames = np.zeros((len(xbins)-1, len(ybins)-1))
-    idxs = np.zeros((len(xbins)-1, len(ybins)-1, len(firstcam_file_indices)), dtype=bool)
+    idxs0 = np.zeros((len(xbins)-1, len(ybins)-1, len(firstcam_file_indices)), dtype=bool)
 
     for i in range(len(xbins)-1):
         for j in range(len(ybins)-1):
             xidx = (x >= xbins[i]) & (x < xbins[i+1])
             yidx = (y >= ybins[j]) & (y < ybins[j+1])
             idx = xidx & yidx
-            idxs[i,j] = idx
+            idxs0[i,j] = idx
             psfcam_binned_frames[i,j] = np.mean(psfcamframes[idx], axis=0)
             num_frames[i,j] = np.sum(idx)
     
+    if bootstrap:
+        idxs = np.zeros((len(xbins)-1, len(ybins)-1, len(firstcam_file_indices)), dtype=int)
+
+        for i in range(len(xbins)-1):
+            for j in range(len(ybins)-1):      
+                all_indices = np.where(idxs0[i,j] == True)[0]
+                # resample the indices with replacement
+                resampled_idx = np.random.choice(all_indices, len(all_indices), replace = True)
+                # store the resampled frames
+                psfcam_binned_frames[i,j] = np.mean(psfcamframes[resampled_idx], axis=0)
+                for k in resampled_idx:
+                    idxs[i,j,k] += 1
+                print(f"Resampled {len(resampled_idx)} frames for bin {i},{j}")
+                print(idxs, idxs0)
+    else:
+        idxs = idxs0
+
     # now read the frames from the firstcam_file_indices and firstcam_frame_indices
     for fileind, f in tqdm(enumerate(firstcam_files)):
         
@@ -74,8 +94,12 @@ def bin_by_centroids_from_indices(psfcamframes, firstcam_file_indices, firstcam_
 
         for i in range(len(id_frame)):
 
-            iy, ix = np.where(idxs[:,:,np.where(id == True)[0][i]] == True) # get the indices of the bin that matches this frame])
-
+            if not bootstrap:
+                iy, ix = np.where(idxs[:,:,np.where(id == True)[0][i]] == True) # get the indices of the bin that matches this frame])
+                nstack = 1
+            else:
+                iy, ix = np.where(idxs[:,:,np.where(id == True)[0][i]] > 0) # get the indices of the bin that matches this frame])
+                nstack = np.sum(idxs[:,:,np.where(id == True)[0][i]])
             try:
                 # np.where(id == True)[0][i] # get the indices of the frames that match this file
 
@@ -83,7 +107,7 @@ def bin_by_centroids_from_indices(psfcamframes, firstcam_file_indices, firstcam_
                 iy = iy[0]
                 ix = ix[0]
 
-                firstcam_binned_frames[iy,ix,:,:] += _dat[i]
+                firstcam_binned_frames[iy,ix,:,:] += _dat[i] * nstack
             except:
                 print(f"Failed to add frame {i} from file {fileind} to bin {iy},{ix}")
                 continue
@@ -94,6 +118,66 @@ def bin_by_centroids_from_indices(psfcamframes, firstcam_file_indices, firstcam_
     
 
 
+
+# def bin_by_centroids_from_indices(psfcamframes, firstcam_file_indices, firstcam_frame_indices, firstcam_files,
+#                                   centroids, xbins, ybins):
+#     '''
+#     Bin frames by centroids, but not from already stored frames.
+#     Reads the frames from the firstcam_file_indices and firstcam_frame_indices.
+#     This is useful when the firstcam frames are too large to store in memory.
+#     '''
+    
+#     x = centroids[:,0]
+#     y = centroids[:,1]
+#     ny = firstcam_params['size_y']
+#     nx = firstcam_params['size_x']
+    
+#     psfcam_binned_frames = np.zeros((len(xbins)-1, len(ybins)-1, psfcamframes.shape[1], psfcamframes.shape[2]))
+#     firstcam_binned_frames = np.zeros((len(xbins)-1, len(ybins)-1, ny, nx))
+
+#     num_frames = np.zeros((len(xbins)-1, len(ybins)-1))
+#     idxs = np.zeros((len(xbins)-1, len(ybins)-1, len(firstcam_file_indices)), dtype=bool)
+
+#     for i in range(len(xbins)-1):
+#         for j in range(len(ybins)-1):
+#             xidx = (x >= xbins[i]) & (x < xbins[i+1])
+#             yidx = (y >= ybins[j]) & (y < ybins[j+1])
+#             idx = xidx & yidx
+#             idxs[i,j] = idx
+#             psfcam_binned_frames[i,j] = np.mean(psfcamframes[idx], axis=0)
+#             num_frames[i,j] = np.sum(idx)
+    
+#     # now read the frames from the firstcam_file_indices and firstcam_frame_indices
+#     for fileind, f in tqdm(enumerate(firstcam_files)):
+        
+#         # indices that correspond to this file
+#         id = (firstcam_file_indices == fileind)
+
+#         # frame indices
+#         id_frame = firstcam_frame_indices[id] # get the frame indices for this file
+        
+#         _dat = fits.getdata(f)
+
+#         for i in range(len(id_frame)):
+
+#             iy, ix = np.where(idxs[:,:,np.where(id == True)[0][i]] == True) # get the indices of the bin that matches this frame])
+
+#             try:
+#                 # np.where(id == True)[0][i] # get the indices of the frames that match this file
+
+#                 # idxs[]
+#                 iy = iy[0]
+#                 ix = ix[0]
+
+#                 firstcam_binned_frames[iy,ix,:,:] += _dat[i]
+#             except:
+#                 print(f"Failed to add frame {i} from file {fileind} to bin {iy},{ix}")
+#                 continue
+
+#     # now calculate the mean
+#     firstcam_binned_frames = firstcam_binned_frames / num_frames[:,:,None,None]
+#     return psfcam_binned_frames, firstcam_binned_frames, num_frames, idxs
+    
 
 
 def calculate_bootstrap_variance_map(firstcamframes, idxs, nbootstrap = 100,
@@ -376,6 +460,15 @@ class SimultaneousData:
         else:
             self.psfcam_binned_frames, self.firstcam_binned_frames, self.num_frames, self.idxs = bin_by_centroids_from_indices(psfcam_frames, firstcam_file_indices, firstcam_frame_indices, self.firstcam_files, centroids, xbins, ybins)
         
+            # this is used for bootstrap later
+            self.result_psfcam_frames = psfcam_frames
+            self.result_firstcam_file_indices = firstcam_file_indices
+            self.result_firstcam_frame_indices = firstcam_frame_indices
+            self.result_firstcam_files = self.firstcam_files
+            self.result_centroids = centroids
+            self.result_xbins = xbins
+            self.result_ybins = ybins
+
         self.xmin = (xbins[0] - np.nanmedian(centroids[:,0])) * self.pix2mas
         self.xmax = (xbins[-1]  - np.nanmedian(centroids[:,0])) * self.pix2mas
         self.ymin = (ybins[0] - np.nanmedian(centroids[:,1])) * self.pix2mas
@@ -393,15 +486,45 @@ class SimultaneousData:
 
         if calculate_variance:
 
-            if return_bootstrap_samples:
-                self.var, self.normvar, self.bootstrap_samples = calculate_bootstrap_variance_map(firstcam_frames, self.idxs, nbootstrap = nbootstrap, return_bootstrap_samples = True)
+            if self.store_spec:
+
+                if return_bootstrap_samples:
+                    self.var, self.normvar, self.bootstrap_samples = calculate_bootstrap_variance_map(firstcam_frames, self.idxs, nbootstrap = nbootstrap, return_bootstrap_samples = True)
+                else:
+                    self.var, self.normvar = calculate_bootstrap_variance_map(firstcam_frames, self.idxs, nbootstrap = nbootstrap)
+                    self.bootstrap_samples = None
+
             else:
-                self.var, self.normvar = calculate_bootstrap_variance_map(firstcam_frames, self.idxs, nbootstrap = nbootstrap)
-                self.bootstrap_samples = None
+                raise ValueError("calculate_variance is not implemented for firstcam frames stored in files. Please use store_spec = True to store the frames in memory.") 
+                                                                                                                                                                                                           
+                # for i in range(nbootstrap):
+                #     psfcam_binned_frames, firstcam_binned_frames, num_frames, idxs = bin_by_centroids_from_indices(psfcam_frames, firstcam_file_indices, firstcam_frame_indices, self.firstcam_files, centroids, xbins, ybins,
+                                                                                                                # bootstrap=True)
+
         else:
             self.var = None
             self.normvar = None
             self.bootstrap_samples = None
+    
+    def save_bootstrap_frames(self, filename, nbootstrap = 100):
+
+        assert self.store_spec is False, "compute_bootstrap_frames is not implemented for firstcam frames stored in memory."
+
+        for i in range(nbootstrap):
+            self.psfcam_binned_frames, self.firstcam_binned_frames, self.num_frames, self.idxs = bin_by_centroids_from_indices(self.result_psfcam_frames, 
+                                                                                                                            self.result_firstcam_file_indices, 
+                                                                                                                            self.result_firstcam_frame_indices,
+                                                                                                                            self.result_firstcam_files, 
+                                                                                                                            self.result_centroids, 
+                                                                                                                            self.result_xbins, 
+                                                                                                                            self.result_ybins,
+                                                                                                                            bootstrap=True)
+        
+            self.var = None
+            self.bootstrap_samples = None
+            self.save(filename + '_bootstrap_%d.fits' % i)
+            print("Saved bootstrap frames to %s" % filename + '_bootstrap_%d.fits' % i)
+
 
     def save(self, filename):
         '''

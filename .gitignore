@@ -179,6 +179,7 @@ PLred/visPLred/examples/example_extract_spec/model/
 PLred/visPLred/examples/example_extract_spec/model_fft/
 PLred/visPLred/examples/example_couplingmap/*.fits
 PLred/examples/example_model_couplingmap/*.gif
+PLred/visPLred/examples/example_nonlinearity_correction/*.fits
 PLred/visPLred/scripts/*.ini
 PLred/examples/example_model_couplingmap/*fits
 PLred/examples/example_image_reconstruction/results/

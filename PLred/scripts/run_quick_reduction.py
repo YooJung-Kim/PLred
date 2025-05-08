@@ -82,6 +82,8 @@ if __name__ == "__main__":
                 anim = mapmodel.diagnostic_plot_model(fibind)#, wav_reconrange)
                 anim.save(output_dir + output_name + f'/polymodel_plots/fibind_{fibind}.gif')
 
+        # polymodel plotting...
+        
         os.makedirs(output_dir + output_name + '/polymodel_plots_residuals/', exist_ok=True)
         for i, specind in enumerate(specinds):
             fig = mapmodel.diagnostic_plot_residuals(i)
@@ -106,7 +108,7 @@ if __name__ == "__main__":
     vmin2 = float(config['Convolution_matrix']['vrange_min'])
 
     wav_to_make = specinds[(wav['v'] < vmax2) & (wav['v'] > vmin2)] - specinds[0]
-    print(wav_to_make)
+    print(wav['v'], vmin2, vmax2, wav_to_make)
 
     image_ngrid = int(config['Convolution_matrix']['image_ngrid'])
     image_fov = float(config['Convolution_matrix']['image_fov'])
@@ -294,6 +296,15 @@ if __name__ == "__main__":
     exists = os.path.exists(output_dir + output_name + '/gauss_model/gauss_model_bootstrap.npz')
     skip = config['Gaussian_model'].as_bool('skip_if_exists')
 
+    fibinds_to_exclude = config['Gaussian_model']['exclude_fibinds']
+    fibinds_to_exclude = [int(i) for i in fibinds_to_exclude]
+    print('Excluding', fibinds_to_exclude)
+    if len(fibinds_to_exclude) > 0:
+        fibinds = np.arange(38)
+        fibinds = np.delete(fibinds, fibinds_to_exclude)
+    else:
+        fibinds = np.arange(38)
+    
     if exists and skip:
         print('Gaussian model exists. skipping...')
     else:
@@ -327,7 +338,7 @@ if __name__ == "__main__":
         os.makedirs(output_dir + output_name + '/gauss_model/', exist_ok=True)
 
         nbootstrap = int(config['Gaussian_model']['nbootstrap'])
-        bootstrap_samples = [np.random.choice(np.arange(38), size=38, replace=True) for _ in range(nbootstrap)]
+        bootstrap_samples = [np.random.choice(fibinds, size=len(fibinds), replace=True) for _ in range(nbootstrap)]
 
         all_opts = []
         all_funs = []
@@ -340,7 +351,6 @@ if __name__ == "__main__":
 
             fitter = fit.PLMapFit(matrix_file = output_dir + output_name + f'/matrix/matrix_{specind}.fits')
 
-            fibinds = np.arange(38)
             fitter.prepare_data(fibinds)
             fitter.subsample_matrix(fibinds)
 
