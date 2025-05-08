@@ -174,9 +174,12 @@ cython_debug/
 PLred/visPLred/development/
 
 # example code outputs
+PLred/visPLred/detector.py
 PLred/visPLred/examples/example_extract_spec/model/
 PLred/visPLred/examples/example_extract_spec/model_fft/
 PLred/visPLred/examples/example_couplingmap/*.fits
+PLred/examples/example_model_couplingmap/*.gif
+PLred/visPLred/examples/example_nonlinearity_correction/*.fits
 PLred/visPLred/scripts/*.ini
 PLred/examples/example_model_couplingmap/*fits
 PLred/examples/example_image_reconstruction/results/
@@ -188,3 +191,5 @@ PLred/examples/example_model_fitting/circle_fitting_results/
 PLred/examples/example_model_fitting/disk_fitting/
 
 PLred/examples/example_model_fitting/scratch*
+PLred/scripts/*.png
+PLred/scripts/*.gif
