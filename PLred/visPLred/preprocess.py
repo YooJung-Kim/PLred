@@ -71,7 +71,7 @@ def read_flat_files(files):
         with fits.open(f, mode='readonly') as hdulist:
             h = hdulist[0].header
 
-            intstr = f.split('s_')[0].split('_')[-1]
+            intstr = f.split('firstpl_')[1].split('s_')[0].split('_')[-1]
             typ = h['DATA-TYP'].lower()
             # int = h['EXPTIME']
 
