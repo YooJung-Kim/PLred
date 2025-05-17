@@ -9,7 +9,6 @@ from configobj import ConfigObj
 import sys, os, glob
 
 
-
 if __name__ == "__main__":
 
     configname = sys.argv[1]
@@ -84,13 +83,13 @@ if __name__ == "__main__":
 
         # polymodel plotting...
         
-        os.makedirs(output_dir + output_name + '/polymodel_plots_residuals/', exist_ok=True)
-        for i, specind in enumerate(specinds):
-            fig = mapmodel.diagnostic_plot_residuals(i)
-            fig.savefig(output_dir + output_name + f'/polymodel_plots_residuals/specind_{specind}.png')
+        # os.makedirs(output_dir + output_name + '/polymodel_plots_residuals/', exist_ok=True)
+        # for i, specind in enumerate(specinds):
+        #     fig = mapmodel.diagnostic_plot_residuals(i)
+        #     fig.savefig(output_dir + output_name + f'/polymodel_plots_residuals/specind_{specind}.png')
 
-            fig = mapmodel.diagnostic_plot_SN(i)
-            fig.savefig(output_dir + output_name + f'/polymodel_plots_residuals/specind_{specind}_SN.png')
+        #     fig = mapmodel.diagnostic_plot_SN(i)
+        #     fig.savefig(output_dir + output_name + f'/polymodel_plots_residuals/specind_{specind}_SN.png')
 
 
     ##########################

@@ -202,6 +202,11 @@ def correct_nonlinearity(observed_val, poly, minval, maxval, verbose= False):
             print(f'Possible roots: {possible_root}')
 
         possible_root = possible_root[(possible_root > observed_val) & (possible_root < 10*observed_val)]
+        
+        if len(possible_root) == 0:
+            if verbose: print(f'No possible roots found for {observed_val}')
+            return observed_val, 3
+        
         idx = np.argmin(np.abs(possible_root - observed_val))
 
         if possible_root[idx] < minval:
@@ -218,7 +223,7 @@ def correct_nonlinearity(observed_val, poly, minval, maxval, verbose= False):
             return possible_root[idx], 0
     except Exception as e:
         if verbose: print(f'Error correcting {observed_val}', e)
-        return observed_val, 3
+        return observed_val, 4
     
 def correct_nonlinearity_map(frame, modelfile,
                              xrange = np.arange(firstcam_params['size_y']),

@@ -2,7 +2,7 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
-import pickle
+import pickle, os
 from astropy.io import fits
 from .utils import find_data_between
 from ..imageutils import subpixel_centroid_2d
@@ -37,7 +37,8 @@ def bin_by_centroids(psfcamframes, firstcamframes, centroids, xbins, ybins):
 
 def bin_by_centroids_from_indices(psfcamframes, firstcam_file_indices, firstcam_frame_indices, firstcam_files,
                                   centroids, xbins, ybins,
-                                  bootstrap = False):
+                                  bootstrap = False,
+                                  skip_frame_reading = False):
     '''
     Bin frames by centroids, but not from already stored frames.
     Reads the frames from the firstcam_file_indices and firstcam_frame_indices.
@@ -57,9 +58,12 @@ def bin_by_centroids_from_indices(psfcamframes, firstcam_file_indices, firstcam_
 
     for i in range(len(xbins)-1):
         for j in range(len(ybins)-1):
+            # check if the x and y coordinates are within the bin
             xidx = (x >= xbins[i]) & (x < xbins[i+1])
             yidx = (y >= ybins[j]) & (y < ybins[j+1])
             idx = xidx & yidx
+
+            # store the indices of the frames that match this bin
             idxs0[i,j] = idx
             psfcam_binned_frames[i,j] = np.mean(psfcamframes[idx], axis=0)
             num_frames[i,j] = np.sum(idx)
@@ -81,42 +85,229 @@ def bin_by_centroids_from_indices(psfcamframes, firstcam_file_indices, firstcam_
     else:
         idxs = idxs0
 
-    # now read the frames from the firstcam_file_indices and firstcam_frame_indices
-    for fileind, f in tqdm(enumerate(firstcam_files)):
-        
-        # indices that correspond to this file
-        id = (firstcam_file_indices == fileind)
+    if not skip_frame_reading:
+        # now read the frames from the firstcam_file_indices and firstcam_frame_indices
+        for fileind, f in tqdm(enumerate(firstcam_files)):
+            print('Start reading file %d' % fileind)
+            
+            # indices that correspond to this file
+            id = (firstcam_file_indices == fileind)
+            print('ID', id, len(id))
+            print(np.where(id == True)[0])
 
-        # frame indices
-        id_frame = firstcam_frame_indices[id] # get the frame indices for this file
-        
-        _dat = fits.getdata(f)
+            # frame indices
+            id_frame = firstcam_frame_indices[id] # get the frame indices for this file
+            print('ID_FRAME', id_frame)
+            # id_frame = np.where(id_frame)[0]
 
-        for i in range(len(id_frame)):
+            _dat = fits.getdata(f)
 
-            if not bootstrap:
-                iy, ix = np.where(idxs[:,:,np.where(id == True)[0][i]] == True) # get the indices of the bin that matches this frame])
-                nstack = 1
-            else:
-                iy, ix = np.where(idxs[:,:,np.where(id == True)[0][i]] > 0) # get the indices of the bin that matches this frame])
-                nstack = np.sum(idxs[:,:,np.where(id == True)[0][i]])
-            try:
-                # np.where(id == True)[0][i] # get the indices of the frames that match this file
+            # CHANGED HERE!!
+            for i0, i in enumerate(id_frame): #range(len(id_frame)):
 
-                # idxs[]
-                iy = iy[0]
-                ix = ix[0]
+                if not bootstrap:
+                    iy, ix = np.where(idxs[:,:,np.where(id == True)[0][i0]] == True) # get the indices of the bin that matches this frame])
+                    # iy, ix = np.where(idxs[:,:,np.where(id == True)[0][i]] == True) # get the indices of the bin that matches this frame])
+                    nstack = 1
+                else:
+                    iy, ix = np.where(idxs[:,:,np.where(id == True)[0][i0]] > 0) # get the indices of the bin that matches this frame])
+                    nstack = np.sum(idxs[:,:,np.where(id == True)[0][i0]])
+                try:
+                    # np.where(id == True)[0][i] # get the indices of the frames that match this file
 
-                firstcam_binned_frames[iy,ix,:,:] += _dat[i] * nstack
-            except:
-                print(f"Failed to add frame {i} from file {fileind} to bin {iy},{ix}")
-                continue
+                    # idxs[]
+                    iy = iy[0]
+                    ix = ix[0]
 
-    # now calculate the mean
-    firstcam_binned_frames = firstcam_binned_frames / num_frames[:,:,None,None]
-    return psfcam_binned_frames, firstcam_binned_frames, num_frames, idxs
+                    firstcam_binned_frames[iy,ix,:,:] += _dat[i] * nstack
+                    print(f"Added frame {i} from file {fileind} to bin {iy},{ix}")
+                except:
+                    print(f"Failed to add frame {i} from file {fileind} to bin {iy},{ix}")
+                    continue
+
+        # now calculate the mean
+        firstcam_binned_frames = firstcam_binned_frames / num_frames[:,:,None,None]
+        return psfcam_binned_frames, firstcam_binned_frames, num_frames, idxs
     
+    else:
+        # if we are not reading the frames, just return the binned frames
+        return psfcam_binned_frames, firstcam_binned_frames, num_frames, idxs
 
+import h5py
+
+def append_frame_to_fits(filename, frame):
+    '''
+    Append a frame to a fits file
+    '''
+    # open the fits file
+    hdu = fits.open(filename, mode='update')
+    data = hdu[0].data
+    print(np.shape(data), np.shape(frame))
+    # append the frame to the data
+    data = np.append(data, frame[None], axis=0)
+    # update the fits file
+    hdu[0].data = data
+    hdu.flush()
+    hdu.close()
+
+
+def bin_by_centroids_to_file(outname, psfcamframes, firstcam_file_indices, firstcam_frame_indices, firstcam_files,
+                                  centroids, xbins, ybins,
+                                #   maxframes = 1000,
+                                #   bootstrap = False,
+                                  skip_frame_reading = False):
+    '''
+    Bin frames by centroids, but not from already stored frames.
+    Reads the frames from the firstcam_file_indices and firstcam_frame_indices.
+    This is useful when the firstcam frames are too large to store in memory.
+    '''
+    
+    x = centroids[:,0]
+    y = centroids[:,1]
+    ny = firstcam_params['size_y']
+    nx = firstcam_params['size_x']
+    
+    psfcam_binned_frames = np.zeros((len(xbins)-1, len(ybins)-1, psfcamframes.shape[1], psfcamframes.shape[2]))
+    firstcam_binned_frames = np.zeros((len(xbins)-1, len(ybins)-1, ny, nx))
+
+    num_frames = np.zeros((len(xbins)-1, len(ybins)-1))
+    idxs = np.zeros((len(xbins)-1, len(ybins)-1, len(firstcam_file_indices)), dtype=bool)
+
+    # h5f = h5py.File(outname+'_bins.h5', 'w')
+    # datasets = {}
+    # for i in range(len(xbins)-1):
+    #     for j in range(len(ybins)-1):
+    #         datasets['bin_%d_%d' % (i,j)] = h5f.create_dataset('bin_%d_%d' % (i,j), 
+    #                                                            shape = (0, firstcam_params['size_y'], firstcam_params['size_x']), 
+    #                                                            maxshape=(None, firstcam_params['size_y'], firstcam_params['size_x']), 
+    #                                                            dtype='int')
+
+
+
+    for i in range(len(xbins)-1):
+        for j in range(len(ybins)-1):
+
+            # assert os.path.exists(outname+'_bin_%d_%d.fits' % (i,j)) is False, "File %s already exists. Try another name for outname." % (outname+'_bin_%d_%d.fits' % (i,j))
+            
+            # create a new fits file for this bin
+            # hdu = fits.PrimaryHDU(np.zeros((0, firstcam_params['size_y'], firstcam_params['size_x']), dtype=int))
+            # hdu.writeto(outname+'_bin_%d_%d.fits' % (i,j), overwrite=True)
+
+            # check if the x and y coordinates are within the bin
+            xidx = (x >= xbins[i]) & (x < xbins[i+1])
+            yidx = (y >= ybins[j]) & (y < ybins[j+1])
+            idx = xidx & yidx
+
+            # store the indices of the frames that match this bin
+            idxs[i,j] = idx
+            psfcam_binned_frames[i,j] = np.mean(psfcamframes[idx], axis=0)
+            num_frames[i,j] = np.sum(idx)
+
+            if num_frames[i,j] > 0:
+                print(np.shape(psfcamframes[idx]))
+
+                with h5py.File(outname+'_bin_%d_%d.h5' % (i,j), 'w') as h5f:
+                    print("creating file %s" % (outname+'_bin_%d_%d.h5' % (i,j)))
+                    
+                    rawframes_dset = h5f.create_dataset('rawframes', 
+                                            shape = (num_frames[i,j], firstcam_params['size_y'], firstcam_params['size_x']), 
+                                            # chunks = (1, firstcam_params['size_y'], firstcam_params['size_x']),
+                                            # maxshape=(None, firstcam_params['size_y'], firstcam_params['size_x']), 
+                                            dtype='int')
+                    psfframes_dset = h5f.create_dataset('psfframes',
+                                                        data = psfcamframes[idx])
+                    peaks_dset = h5f.create_dataset('peaks',
+                                                    data = np.nanmax(psfcamframes[idx], axis=(1,2)))
+                    centers_dset = h5f.create_dataset('centers',
+                                                    data = np.array([x[idx], y[idx]]).T)
+                    
+                    fileinds_dset = h5f.create_dataset('fileinds',
+                                                        data = firstcam_file_indices[idx])
+                    frameidnds_dset = h5f.create_dataset('frameinds',
+                                                        data = firstcam_frame_indices[idx])
+
+                    h5f.attrs['num_frames'] = num_frames[i,j].astype(int)
+                    h5f.attrs['xbin'] = xbins[i]
+                    h5f.attrs['ybin'] = ybins[j]
+                    
+                
+
+
+    write_idx = {(i, j):0 for i in range(len(xbins)-1) for j in range(len(ybins)-1)}
+
+    if not skip_frame_reading:
+        # now read the frames from the firstcam_file_indices and firstcam_frame_indices
+        for fileind, f in tqdm(enumerate(firstcam_files)):
+            print('Start reading file %d' % fileind)
+            
+            # indices that correspond to this file
+            id = (firstcam_file_indices == fileind)
+            # print('ID', id, len(id))
+            # print(np.where(id == True)[0])
+
+            # frame indices
+            id_frame = firstcam_frame_indices[id] # get the frame indices for this file
+            # print('ID_FRAME', id_frame)
+            # id_frame = np.where(id_frame)[0]
+
+            _dat = fits.getdata(f)
+
+            # CHANGED HERE!!
+            for i0, i in enumerate(id_frame): #range(len(id_frame)):
+
+                
+                iy, ix = np.where(idxs[:,:,np.where(id == True)[0][i0]] == True) # get the indices of the bin that matches this frame])
+                # iy, ix = np.where(idxs[:,:,np.where(id == True)[0][i]] == True) # get the indices of the bin that matches this frame])
+                # nstack = 1
+
+                try:
+                    # np.where(id == True)[0][i] # get the indices of the frames that match this file
+
+                    # idxs[]
+                    iy = iy[0]
+                    ix = ix[0]
+
+                    # append the frame to the fits file
+                    # print(_dat[i].shape)
+
+                    # append_frame_to_fits(outname+'_bin_%d_%d.fits' % (iy,ix), _dat[i])
+                    # ds = datasets['bin_%d_%d' % (iy,ix)]
+                    # ds.resize((ds.shape[0] + 1, firstcam_params['size_y'], firstcam_params['size_x']))
+                    # ds[-1] = _dat[i]
+
+                    # append the frame to the h5 file
+                    with h5py.File(outname+'_bin_%d_%d.h5' % (iy,ix), 'r+') as h5f:
+                        dset = h5f['rawframes']
+                        wi = write_idx[(iy, ix)]
+                        dset[wi] = _dat[i]
+                        write_idx[(iy, ix)] += 1
+
+                    # firstcam_binned_frames[iy,ix,:,:] += _dat[i] * nstack
+                    print(f"Added frame {i} from file {fileind} to bin {iy},{ix}")
+                except:
+                    # print(e)
+                    print(f"Failed to add frame {i} from file {fileind} to bin {iy},{ix}")
+                    continue
+        # # close the h5 file
+        # h5f.close()
+
+        # # dump to fits file
+        # with h5py.File(outname+'_bins.h5', 'r') as h5f:
+        #     for i in range(len(xbins)-1):
+        #         for j in range(len(ybins)-1):
+        #             ds = h5f['bin_%d_%d' % (i,j)]
+        #             # create a new fits file for this bin
+        #             hdu = fits.PrimaryHDU(ds[:])
+        #             hdu.writeto(outname+'_bin_%d_%d.fits' % (i,j), overwrite=True)
+
+        # now calculate the mean
+        # firstcam_binned_frames = firstcam_binned_frames / num_frames[:,:,None,None]
+        return psfcam_binned_frames, num_frames, idxs
+    
+    else:
+        # if we are not reading the frames, just return the binned frames
+        return psfcam_binned_frames, num_frames, idxs
+    
 
 
 # def bin_by_centroids_from_indices(psfcamframes, firstcam_file_indices, firstcam_frame_indices, firstcam_files,
@@ -401,7 +592,10 @@ class SimultaneousData:
         self.centroids = centroids
 
     def bin_by_centroids(self, map_n, map_width, effective_idx = None, plot = True, calculate_variance = True, nbootstrap = 100,
-                         return_bootstrap_samples = False):
+                         return_bootstrap_samples = False,
+                         skip_frame_reading = False,
+                         to_file = False,
+                         filename = None):
 
         '''
         Bin the frames by centroids
@@ -458,8 +652,12 @@ class SimultaneousData:
         if self.store_spec:
             self.psfcam_binned_frames, self.firstcam_binned_frames, self.num_frames, self.idxs = bin_by_centroids(psfcam_frames, firstcam_frames, centroids, xbins, ybins)
         else:
-            self.psfcam_binned_frames, self.firstcam_binned_frames, self.num_frames, self.idxs = bin_by_centroids_from_indices(psfcam_frames, firstcam_file_indices, firstcam_frame_indices, self.firstcam_files, centroids, xbins, ybins)
-        
+            if not to_file:
+                self.psfcam_binned_frames, self.firstcam_binned_frames, self.num_frames, self.idxs = bin_by_centroids_from_indices(psfcam_frames, firstcam_file_indices, firstcam_frame_indices, self.firstcam_files, centroids, xbins, ybins, skip_frame_reading=skip_frame_reading)
+            else:
+                self.psfcam_binned_frames, self.num_frames, self.idxs = bin_by_centroids_to_file(filename, psfcam_frames, firstcam_file_indices, firstcam_frame_indices, self.firstcam_files, centroids, xbins, ybins, skip_frame_reading=skip_frame_reading)
+                return      
+             
             # this is used for bootstrap later
             self.result_psfcam_frames = psfcam_frames
             self.result_firstcam_file_indices = firstcam_file_indices

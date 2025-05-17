@@ -9,7 +9,9 @@ import PLred.mapmodel as mm
 
 # couplingmap_data = '/home/first/yjkim/flat_characterization/2025-02-11/flux_dependent_flat/corrected_betcmi_20250211_couplingmap.fits'
 # couplingmap_data = '/home/first/yjkim/flat_characterization/2025-02-11/flux_dependent_flat/corrected_betcmi_20250211_couplingmap_badpix.fits'
-couplingmap_data = '/mnt/datazpool/PL/yjkim/reduced_map/betcmi_20250211/betcmi_20250211_couplingmap_frames_12:11:00_12:19:09_combined.fits'
+# couplingmap_data = '/mnt/datazpool/PL/yjkim/reduced_map/betcmi_20250211/betcmi_20250211_couplingmap_frames_12:11:00_12:19:09_combined.fits'
+couplingmap_data = '/home/first/yjkim/OnskyDemo_betaCMi/betcmi_20240917_fin_couplingmap_lastfiledrop_14:55:17_15:09:16_adhoc_corrected.fits'
+# couplingmap_data = '/home/first/yjkim/OnskyDemo_betaCMi/betcmi_20250211_fin_couplingmap_12:11:00_12:19:09_adhoc_corrected.fits'
 data = fits.open(couplingmap_data)
 
 frames0 = data[0].data
@@ -42,11 +44,15 @@ n = len(pos_mas)
 mapmodel = mm.CouplingMapModel(mapdata = couplingmap_data)
 
 # wav_fitrange = np.r_[0:95, 120:200]
-wav_fitrange = np.r_[0:100, 120:200]
-wav_reconrange = np.r_[0:200]
-all_map_inputs, all_modeled_recons, all_modeled_coeffs, model_chi2 = \
-    mapmodel.make_polynomial_model('corrected2_betcmi_20250211_polymodel', wav_fitrange, wav_reconrange)
+# wav_fitrange = np.r_[0:100, 120:200]
+# wav_reconrange = np.r_[0:200]
 
+wav_fitrange = np.r_[400:500, 520:600]
+wav_reconrange = np.r_[400:600]
+all_map_inputs, all_modeled_recons, all_modeled_coeffs, model_chi2 = \
+    mapmodel.make_polynomial_model('adhoc_corrected_betcmi_20240917_polymodel', wav_fitrange, wav_reconrange)
+
+print(np.shape(all_map_inputs), np.shape(all_modeled_recons), np.shape(all_modeled_coeffs), np.shape(model_chi2))
 for fibind in range(38):
     fig, axs = plt.subplots(ncols=3, figsize=(10,3))
 
@@ -67,4 +73,4 @@ for fibind in range(38):
         axs[2].set_title('residual')
 
     anim = FuncAnimation(fig, animate,np.arange(90,120), interval = 100)
-    anim.save('couplingmap_example_corrected2_fibind%d.gif' % fibind)
+    anim.save('couplingmap_example_adhoc_corrected_20240917_fibind%d.gif' % fibind)

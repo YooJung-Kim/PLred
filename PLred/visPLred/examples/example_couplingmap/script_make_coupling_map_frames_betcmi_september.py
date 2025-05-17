@@ -11,8 +11,9 @@ from PLred.visPLred import couplingmap as cm
 firstcam_timestamp_path = '/mnt/datazpool/PL/20240917/firstpl/'
 firstcam_spec_path =      '/mnt/datazpool/PL/20240917/firstpl/'
 obs_start = '14:55:00'
-obs_end   = '15:00:00' #'15:10:09'
+obs_end   = '15:09:06'
 
+output_path = '/mnt/datazpool/PL/yjkim/reduced_map/betcmi_20240917/'
 # obs_starts = ['14:35:00', '14:45:00', '14:45:00', '14:55:00']
 # obs_ends = ['14:45:00', '14:55:00', '14:55:00', '15:10:00']
 
@@ -30,5 +31,5 @@ sd = cm.SimultaneousData(firstcam_timestamp_path, firstcam_spec_path,
 
 sd.compute_psfcam_centroids(peak=True)
 sd.bin_by_centroids(15, 3, calculate_variance = False)#, return_bootstrap_samples= True)
-sd.save(f'betcmi_20240917_couplingmap_frames_{obs_start}_{obs_end}_test2.fits')
-sd.save_bootstrap_frames(f'betcmi_20240917_couplingmap_frames_{obs_start}_{obs_end}_test2')
+sd.save(output_path+f'betcmi_20240917_couplingmap_frames_{obs_start}_{obs_end}.fits')
+sd.save_bootstrap_frames(output_path+f'betcmi_20240917_couplingmap_frames_{obs_start}_{obs_end}.fits')

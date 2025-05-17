@@ -22,7 +22,8 @@ yrange = np.arange(xmin,xmax)
 nbootstrap = 38
 
 # modelfile = '/mnt/datazpool/PL/yjkim/flat_characterization/2025-02-11/flux_dependent_flat/model_nonlinearity.fits'
-modelfile = '/home/first/yjkim/PLred/PLred/visPLred/examples/example_nonlinearity_correction/model_nonlinearity_cutmin100.fits'
+modelfile = '/home/first/yjkim/PLred/PLred/visPLred/examples/example_nonlinearity_correction/model_nonlinearity_new.fits'
+# modelfile = '/home/first/yjkim/PLred/PLred/visPLred/examples/example_nonlinearity_correction/model_nonlinearity_cutmin100.fits'
 dark = fits.getdata('/mnt/datazpool/PL/yjkim/reduced/betcmi_20250211_fin/dark.fits')
 
 avg_name = f'{mapdata_name}.fits'
@@ -62,26 +63,26 @@ def extract_spec_from_map(data):
     return specmaps
 
 # extract spec from avg maps
-if os.path.exists(avg_name.replace('.fits', '_spec.fits')):
-    specmaps_avg = fits.getdata(avg_name.replace('.fits', '_spec.fits'))
+if os.path.exists(avg_name.replace('.fits', '_spec2.fits')):
+    specmaps_avg = fits.getdata(avg_name.replace('.fits', '_spec2.fits'))
     print("skipping average spectrum extraction")
 else:
     specmaps_avg = extract_spec_from_map(fits.getdata(avg_name))
     # save the average spectrum
-    fits.writeto(avg_name.replace('.fits', '_spec.fits'), specmaps_avg, overwrite=True)
+    fits.writeto(avg_name.replace('.fits', '_spec2.fits'), specmaps_avg, overwrite=True)
 
 # extract spec from bootstrap maps
 specmaps_bootstrap = []
 for i in tqdm(range(nbootstrap)):
 
-    if os.path.exists(bootstrap_name[i].replace('.fits', '_spec.fits')):
-        specmaps_bootstrap.append(fits.getdata(bootstrap_name[i].replace('.fits', '_spec.fits')))
+    if os.path.exists(bootstrap_name[i].replace('.fits', '_spec2.fits')):
+        specmaps_bootstrap.append(fits.getdata(bootstrap_name[i].replace('.fits', '_spec2.fits')))
         print("skipping bootstrap spectrum extraction for ", bootstrap_name[i])
     
     else:
         specmaps_bootstrap.append(extract_spec_from_map(fits.getdata(bootstrap_name[i])))
         # save the bootstrap spectrum
-        fits.writeto(bootstrap_name[i].replace('.fits', '_spec.fits'), specmaps_bootstrap[-1], overwrite=True)
+        fits.writeto(bootstrap_name[i].replace('.fits', '_spec2.fits'), specmaps_bootstrap[-1], overwrite=True)
 
 # compute variance
 specmaps_var = np.nanvar(specmaps_bootstrap, axis=0)
@@ -105,5 +106,5 @@ hdu4 = fits.ImageHDU(specmaps_var, name='var')
 hdu5 = fits.ImageHDU(specmaps_normvar, name='normvar')
 
 hdulist = fits.HDUList([hdu, hdu2, hdu3, hdu4, hdu5])
-hdulist.writeto(f'{mapdata_name}_combined.fits', overwrite=True)
+hdulist.writeto(f'{mapdata_name}_combined2.fits', overwrite=True)
 
