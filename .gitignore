@@ -189,6 +189,7 @@ PLred/examples/example_image_modeling/*
 PLred/examples/example_model_fitting/gaussian_fitting_results/
 PLred/examples/example_model_fitting/circle_fitting_results/
 PLred/examples/example_model_fitting/disk_fitting/
+PLred/examples/example_model_couplingmap_new/*.gif
 
 PLred/examples/example_model_fitting/scratch*
 PLred/scripts/*.png

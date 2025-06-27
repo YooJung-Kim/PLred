@@ -562,3 +562,39 @@ def make_flat_image(image, cutoff = 200, mincut = 0.5, maxcut = 1.5):
     flat[flat < mincut] = 1
     flat[flat > maxcut] = 1
     return flat
+
+
+
+def show_voronoi(vor, vv, ax=None, vmin = None, vmax = None):
+    from scipy.spatial import Voronoi, voronoi_plot_2d
+    
+    if ax is None:
+        ax = plt.subplot(111)
+    # find min/max values for normalization
+    if vmin is None: vmin = min(vv)
+    if vmax is None: vmax = max(vv)
+    
+    # normalize chosen colormap
+    import matplotlib as mpl
+    import matplotlib.cm as cm
+    norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax, clip=True)
+    mapper = cm.ScalarMappable(norm=norm, 
+                               #cmap=cm.Blues_r,
+                            #    cmap=cm.gray,
+                              )
+    
+    # plot Voronoi diagram, and fill finite regions with color mapped from speed value
+    voronoi_plot_2d(vor, ax=ax,
+                    #show_points=True, 
+                    show_points=False,
+                    show_vertices=False, 
+                    line_width=0,
+                    s=1,
+                    )
+    for r in range(len(vor.point_region)):
+        region = vor.regions[vor.point_region[r]]
+        if not -1 in region:
+            polygon = [vor.vertices[i] for i in region]
+            ax.fill(*zip(*polygon), color=mapper.to_rgba(vv[r]))
+    #plt.show()
+    return ax

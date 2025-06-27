@@ -121,7 +121,7 @@ def bin_by_centroids_from_indices(psfcamframes, firstcam_file_indices, firstcam_
 
                     firstcam_binned_frames[iy,ix,:,:] += _dat[i] * nstack
                     print(f"Added frame {i} from file {fileind} to bin {iy},{ix}")
-                except:
+                except Exception:
                     print(f"Failed to add frame {i} from file {fileind} to bin {iy},{ix}")
                     continue
 
@@ -309,6 +309,109 @@ def bin_by_centroids_to_file(outname, psfcamframes, firstcam_file_indices, first
         return psfcam_binned_frames, num_frames, idxs
     
 
+def voronoi_remapping_to_file(outname, mapping_indices, voronoi_coordinates_mas, n_points, psfcamframes, firstcam_file_indices, firstcam_frame_indices, firstcam_files,
+                                  skip_frame_reading = False):
+    
+    # mapping_indices = kmeans.labels_
+
+    for i in tqdm(range(len(n_points))):
+
+        w = np.nonzero(mapping_indices == i)[0]
+        with h5py.File(outname+'_voronoi_bin_%d.h5' % (i), 'w') as h5f:
+            print("creating file %s" % (outname+'_voronoi_bin_%d.h5' % (i)))
+
+            frames = []
+            for iw in w:
+                file_i = firstcam_file_indices[iw]
+                frame_i = firstcam_frame_indices[iw]
+                # print("reading file %d, frame %d" % (file_i, frame_i))
+                with fits.open(firstcam_files[file_i], memmap = True, 
+                               mode='readonly', do_not_scale_image_data = True) as hdu:
+                    
+                    bzero = hdu[0].header.get('BZERO', 0)
+                    bscale = hdu[0].header.get('BSCALE', 1)
+                    scaled_data = hdu[0].data[frame_i].copy().astype(np.float32) * bscale + bzero
+
+                    # read the frame from the file
+                    # frames.append(hdu[0].data[frame_i])
+                    frames.append(scaled_data)
+
+            
+            rawframes_dset = h5f.create_dataset('rawframes', 
+                                                data = np.array(frames),
+                                    # shape = (n_points[i], firstcam_params['size_y'], firstcam_params['size_x']), 
+                                    dtype='int')
+            psfframes_dset = h5f.create_dataset('psfframes',
+                                                data = psfcamframes[w])
+            peaks_dset = h5f.create_dataset('peaks',
+                                            data = np.nanmax(psfcamframes[w], axis=(1,2)))
+            
+            fileinds_dset = h5f.create_dataset('fileinds',
+                                                data = firstcam_file_indices[w])
+            frameidnds_dset = h5f.create_dataset('frameinds',
+                                                data = firstcam_frame_indices[w])
+
+            h5f.attrs['num_frames'] = n_points[i].astype(int)
+            h5f.attrs['xbin'] = voronoi_coordinates_mas[i,0]
+            h5f.attrs['ybin'] = voronoi_coordinates_mas[i,1]
+    
+
+    # write_idx = {(i):0 for i in range(len(n_points))}
+
+    # if not skip_frame_reading:
+    #     # now read the frames from the firstcam_file_indices and firstcam_frame_indices
+    #     for fileind, f in tqdm(enumerate(firstcam_files)):
+    #         print('Start reading file %d' % fileind)
+            
+    #         # indices that correspond to this file
+    #         id = (firstcam_file_indices == fileind)
+    #         # print('ID', id, len(id))
+    #         # print(np.where(id == True)[0])
+
+    #         # frame indices
+    #         id_frame = firstcam_frame_indices[id] # get the frame indices for this file
+    #         # print('ID_FRAME', id_frame)
+    #         # id_frame = np.where(id_frame)[0]
+
+    #         _dat = fits.getdata(f)
+
+
+    #         for i0, i in enumerate(id_frame): #range(len(id_frame)):
+
+
+    #             # append the frame to the h5 file
+    #             with h5py.File(outname+'_voronoi_bin_%d.h5' % (i), 'r+') as h5f:
+    #                 dset = h5f['rawframes']
+    #                 wi = write_idx[(iy, ix)]
+    #                 dset[wi] = _dat[i]
+    #                 write_idx[(iy, ix)] += 1
+
+    #             # firstcam_binned_frames[iy,ix,:,:] += _dat[i] * nstack
+    #             print(f"Added frame {i} from file {fileind} to bin {iy},{ix}")
+                # except:
+                    # # print(e)
+                    # print(f"Failed to add frame {i} from file {fileind} to bin {iy},{ix}")
+                    # continue
+        # # close the h5 file
+        # h5f.close()
+
+        # # dump to fits file
+        # with h5py.File(outname+'_bins.h5', 'r') as h5f:
+        #     for i in range(len(xbins)-1):
+        #         for j in range(len(ybins)-1):
+        #             ds = h5f['bin_%d_%d' % (i,j)]
+        #             # create a new fits file for this bin
+        #             hdu = fits.PrimaryHDU(ds[:])
+        #             hdu.writeto(outname+'_bin_%d_%d.fits' % (i,j), overwrite=True)
+
+        # now calculate the mean
+        # firstcam_binned_frames = firstcam_binned_frames / num_frames[:,:,None,None]
+    #     return psfcam_binned_frames, num_frames, idxs
+    
+    # else:
+    #     # if we are not reading the frames, just return the binned frames
+    #     return psfcam_binned_frames, num_frames, idxs
+
 
 # def bin_by_centroids_from_indices(psfcamframes, firstcam_file_indices, firstcam_frame_indices, firstcam_files,
 #                                   centroids, xbins, ybins):
@@ -447,6 +550,38 @@ def validate_timestamp_matching(timestamps1, timestamps2):
 
     return idx1, idx2
 
+def show_voronoi(vor, vv, ax=None, minima = None, maxima = None):
+    if ax is None:
+        ax = plt.subplot(111)
+    # find min/max values for normalization
+    if minima is None: minima = min(vv)
+    if maxima is None: maxima = max(vv)
+    
+    # normalize chosen colormap
+    import matplotlib as mpl
+    import matplotlib.cm as cm
+    from scipy.spatial import voronoi_plot_2d
+
+    norm = mpl.colors.Normalize(vmin=minima, vmax=maxima, clip=True)
+    mapper = cm.ScalarMappable(norm=norm, 
+                               #cmap=cm.Blues_r,
+                            #    cmap=cm.gray,
+                              )
+    
+    # plot Voronoi diagram, and fill finite regions with color mapped from speed value
+    voronoi_plot_2d(vor, ax=ax,
+                    #show_points=True, 
+                    show_points=False,
+                    show_vertices=False, 
+                    line_width=0,
+                    s=1)
+    for r in range(len(vor.point_region)):
+        region = vor.regions[vor.point_region[r]]
+        if not -1 in region:
+            polygon = [vor.vertices[i] for i in region]
+            plt.fill(*zip(*polygon), color=mapper.to_rgba(vv[r]))
+    #plt.show()
+    return ax
 
 class SimultaneousData:
     '''
@@ -456,12 +591,15 @@ class SimultaneousData:
     normvar = None
     var = None
 
+    vor = None
+
     def __init__(self, firstcam_timestamp_path, firstcam_spec_path,
                  obs_start, obs_end,
                  psfcam, 
                  psfcam_frames_name, psfcam_timestamp_name,
                  match_frames = True,
-                 store_spec = True):
+                 store_spec = True,
+                 use_voronoi = False):
         
         '''
         Initialize the class
@@ -503,6 +641,8 @@ class SimultaneousData:
         self.psfcam_name = psfcam
 
         self.store_spec = store_spec
+
+        self.use_voronoi = use_voronoi
 
         if match_frames:
             if store_spec:
@@ -649,12 +789,22 @@ class SimultaneousData:
         self.xbins = xbins
         self.ybins = ybins
 
+        self.xmin = (xbins[0] - np.nanmedian(centroids[:,0])) * self.pix2mas
+        self.xmax = (xbins[-1]  - np.nanmedian(centroids[:,0])) * self.pix2mas
+        self.ymin = (ybins[0] - np.nanmedian(centroids[:,1])) * self.pix2mas
+        self.ymax = (ybins[-1]  - np.nanmedian(centroids[:,1])) * self.pix2mas
+
+
         if self.store_spec:
             self.psfcam_binned_frames, self.firstcam_binned_frames, self.num_frames, self.idxs = bin_by_centroids(psfcam_frames, firstcam_frames, centroids, xbins, ybins)
         else:
             if not to_file:
                 self.psfcam_binned_frames, self.firstcam_binned_frames, self.num_frames, self.idxs = bin_by_centroids_from_indices(psfcam_frames, firstcam_file_indices, firstcam_frame_indices, self.firstcam_files, centroids, xbins, ybins, skip_frame_reading=skip_frame_reading)
             else:
+                import json
+                infodict = {'xmin': self.xmin, 'ymin': self.ymin, 'xmax': self.xmax, 'ymax': self.ymax, 'map_n': map_n, 'map_w': map_width}
+                json.dump(infodict, open(filename+'_info.json', 'w'))
+                print("Info Saved to %s" % filename+'_info.json')
                 self.psfcam_binned_frames, self.num_frames, self.idxs = bin_by_centroids_to_file(filename, psfcam_frames, firstcam_file_indices, firstcam_frame_indices, self.firstcam_files, centroids, xbins, ybins, skip_frame_reading=skip_frame_reading)
                 return      
              
@@ -667,10 +817,6 @@ class SimultaneousData:
             self.result_xbins = xbins
             self.result_ybins = ybins
 
-        self.xmin = (xbins[0] - np.nanmedian(centroids[:,0])) * self.pix2mas
-        self.xmax = (xbins[-1]  - np.nanmedian(centroids[:,0])) * self.pix2mas
-        self.ymin = (ybins[0] - np.nanmedian(centroids[:,1])) * self.pix2mas
-        self.ymax = (ybins[-1]  - np.nanmedian(centroids[:,1])) * self.pix2mas
 
         if plot:
 
@@ -703,7 +849,94 @@ class SimultaneousData:
             self.var = None
             self.normvar = None
             self.bootstrap_samples = None
-    
+
+    def make_voronoi_binning(self, n_per_bin = 1000, effective_idx = None, 
+                             map_width = 3, plot = True, savedir = None):
+        '''
+        Make voronoi binning
+        '''
+
+        if savedir is not None:
+            os.makedirs(savedir, exist_ok=True)
+
+        if effective_idx is None:
+            effective_idx = np.arange(len(self.psfcam_frames))
+        
+        centroids = self.centroids[effective_idx]
+        psfcam_frames = self.psfcam_frames[effective_idx]
+        firstcam_file_indices = self.firstcam_file_indices[effective_idx]
+        firstcam_frame_indices = self.firstcam_frame_indices[effective_idx]
+
+        medpoint = np.nanmedian(centroids, axis=0)
+
+        shifted_centroids = centroids - medpoint
+       
+        # filter out the centroids that are too far from the median
+        framemask = (
+            (shifted_centroids[:, 0] > -map_width / 2) &
+            (shifted_centroids[:, 0] <  map_width / 2) &
+            (shifted_centroids[:, 1] > -map_width / 2) &
+            (shifted_centroids[:, 1] <  map_width / 2)
+        )
+
+        self.map_width = map_width
+
+        self.filtered_centroids = shifted_centroids[framemask] * self.pix2mas
+        self.filtered_psfcam_frames = psfcam_frames[framemask]
+        self.filtered_firstcam_file_indices = firstcam_file_indices[framemask]
+        self.filtered_firstcam_frame_indices = firstcam_frame_indices[framemask]
+
+        from sklearn.cluster import KMeans
+        n_clusters = len(centroids) // n_per_bin
+        print("Number of clusters: %d" % n_clusters)
+        kmeans = KMeans(n_clusters = n_clusters, random_state=0, n_init = 'auto').fit(self.filtered_centroids)
+        
+        from scipy.spatial import Voronoi
+        vor = Voronoi(kmeans.cluster_centers_)
+        if savedir is not None:
+            with open(savedir+"voronoi.pkl", "wb") as f:
+                pickle.dump(vor, f)
+            print("Saved voronoi to %s" % savedir+"/voronoi.pkl")
+
+        n_points = np.empty((n_clusters,),dtype=int)
+        for i in range(n_clusters):
+            n_points[i] = len(np.nonzero(kmeans.labels_ == i)[0])
+
+        if plot:
+            fig = plt.figure(figsize=(4,4))
+            ax = show_voronoi(vor, n_points)
+            if savedir is not None:
+                fig.savefig(savedir + '/voronoi_nframes.png')
+        
+        self.vor = vor
+        self.voronoi_nframes = n_points
+        self.voronoi_coordinates = kmeans.cluster_centers_
+        self.kmeans = kmeans
+        self.n_points = n_points
+
+
+        return vor
+
+    def remap_frames_voronoi(self, outname):
+
+        assert self.vor is not None, "Voronoi binning not done yet. Please run make_voronoi_binning first."
+
+        import json
+        infodict = {'map_width': self.map_width, 'n_clusters': len(self.voronoi_nframes)}
+        json.dump(infodict, open(outname+'_info.json', 'w'))
+
+        # remap the frames to the voronoi bins
+        voronoi_remapping_to_file(outname,
+                                  self.kmeans.labels_,
+                                  self.voronoi_coordinates,
+                                  self.n_points,
+                                  self.filtered_psfcam_frames,
+                                  self.filtered_firstcam_file_indices,
+                                  self.filtered_firstcam_frame_indices,
+                                  self.firstcam_files,
+                                  )
+
+
     def save_bootstrap_frames(self, filename, nbootstrap = 100):
 
         assert self.store_spec is False, "compute_bootstrap_frames is not implemented for firstcam frames stored in memory."

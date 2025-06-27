@@ -352,6 +352,128 @@ def make_interpolation_model(normcube, pos_mas, wav_fitrange, wav_reconrange,
 
 
 
+def make_interpolation_model_irregular(normcube, points_x, points_y, wav_fitrange, wav_reconrange, 
+                             poly_deg_spatial = 7, poly_deg_spectral = 7,
+                             variance_map = None, weighted = True):
+    '''
+    Make a polynomial interpolation model for the coupling map data.
+
+    Parameters
+    ----------
+    normcube : np.ndarray
+        normalized cube data with shape (n_x, n_y, n_wav)
+    pos_mas : np.ndarray
+        positions in milliarcseconds (mas) for the spatial grid
+    wav_fitrange : list
+        wavelength range for fitting the polynomial
+    wav_reconrange : list
+        wavelength range for reconstructing the polynomial
+    poly_deg_spatial : int
+        degree of the polynomial in spatial direction
+    poly_deg_spectral : int
+        degree of the polynomial in spectral direction
+    variance_map : np.ndarray, optional
+        variance map for weighted least squares, should have the same shape as normcube
+    weighted : bool
+        if True, use weighted least squares
+
+    Returns
+    -------
+    modeled_coeffs : np.ndarray
+        coefficients of the polynomial model with shape (n_wav, n_coeffs)
+    modeled_recon : np.ndarray
+        reconstructed data with shape (n_x, n_y, n_wav)
+    all_map_input : np.ndarray
+        input data for the polynomial model with shape (n_x, n_y, n_wav)
+    '''
+
+    if weighted is True: assert variance_map is not None, "for weighted least squares, variance map should be given"
+
+    all_recon_data, all_map_input, all_coeffs = [], [], []
+
+    # x_grid, y_grid = np.meshgrid(pos_mas, pos_mas)
+
+    # x_flat = x_grid.ravel()
+    # y_flat = y_grid.ravel()
+
+    from PLred.mapmodel import poly_design_matrix
+    from scipy.linalg import lstsq
+    
+    X_poly = poly_design_matrix(points_x, points_y, poly_deg_spatial)
+
+    _wav_fitrange_inds = []
+    for ii, specind in enumerate(wav_reconrange):
+        # iterate over the spectral indices in the recon range
+
+        map_data = normcube[:,specind] # cube[:,:,specind] / np.nansum(cube[:,:,specind])
+        weight = 1/variance_map[:,specind]
+        idx = ~np.isfinite(map_data)
+        map_data[idx] = 0
+        weight[idx] = 0
+
+        reshaped_data = map_data.ravel()
+        
+        if weighted:
+            reshaped_weights = weight.ravel() #* 0 + 1.0
+        else:
+            reshaped_weights = np.ones_like(reshaped_data)
+
+
+
+        X_poly_weighted = X_poly * np.sqrt(reshaped_weights[:,np.newaxis])
+        b_weighted = reshaped_data * np.sqrt(reshaped_weights)
+
+        coeffs, _, _, _ = lstsq(X_poly_weighted, b_weighted)
+        
+        recon = np.dot(X_poly, coeffs)
+
+        # reshape to match the cube
+        # recon = recon.reshape((len(pos_mas), len(pos_mas)))
+        # map_input = reshaped_data.reshape((len(pos_mas), len(pos_mas)))
+
+        all_recon_data.append(recon)
+        all_map_input.append(reshaped_data)
+        
+        # store the coefficients
+        all_coeffs.append(coeffs)
+        if specind in wav_fitrange:
+            _wav_fitrange_inds.append(ii)
+    
+    _wav_fitrange_inds = np.array(_wav_fitrange_inds)
+
+    all_coeffs = np.array(all_coeffs)
+    modeled_coeffs = np.zeros_like(all_coeffs)
+
+    _wav_reconrange_inds = []
+    for ii, coeff_ind in enumerate(range(np.shape(all_coeffs)[1])):
+        # polynomial fit of the coefficients along the wavelength range (fitrange) and store the interpolated coefficients in reconrange
+        poly = np.polyfit(wav_fitrange, all_coeffs[_wav_fitrange_inds,coeff_ind], deg = poly_deg_spectral)
+        modeled_coeff = np.poly1d(poly)(wav_reconrange)
+        modeled_coeffs[:,coeff_ind] = modeled_coeff
+        _wav_reconrange_inds.append(ii)
+
+    modeled_recon = []
+    for ii, specind in enumerate(wav_reconrange):
+        # compute the modeled reconstruction for each spectral index in the recon range
+        recon = np.dot(X_poly, modeled_coeffs[ii])
+        # recon = np.dot(X_poly, modeled_coeffs[specind])
+        modeled_recon.append(recon)#.reshape((len(pos_mas), len(pos_mas))))
+
+    modeled_recon = np.array(modeled_recon)
+
+    all_map_input = np.array(all_map_input)
+
+    # # fill in the missing values
+    # missing_indices_x = np.where(idx == True)[0]
+    # missing_indices_y = np.where(idx == True)[1]
+
+    # for (mx, my) in zip(missing_indices_x, missing_indices_y):
+    #     (all_map_input)[:,mx, my] = modeled_recon[:,mx, my]
+
+    return modeled_coeffs, modeled_recon, all_map_input
+
+
+
 
 class CouplingMapModel:
 
@@ -652,3 +774,181 @@ class CouplingMapModel:
 
         return fig
         
+class VoronoiCouplingMapModel(CouplingMapModel):
+
+    def __init__(self, mapdata = None, model = None,
+                 coeff_model = None,
+                 min_nframes = 5):
+
+        '''
+        Initialize the CouplingMapModel class.
+        Either loads the mapdata fits file or the model fits file.
+            
+        Parameters
+        ----------
+        mapdata : str, optional
+            path to the mapdata fits file
+        model : str, optional
+            path to the model fits file
+        min_nframes : int, optional
+            minimum number of frames to consider a pixel valid, default is 5
+        '''
+        self.data = None
+        self.datavar = None
+        self.datanormvar = None
+
+        if mapdata is not None:
+            print("loading mapdata")
+            self.map_fits = fits.open(mapdata)
+
+            self.data = self.map_fits[0].data
+            self.map_header = self.map_fits[0].header
+            self.numframes = self.map_fits[1].data
+            self.datavar = self.map_fits[3].data
+            self.datanormvar = self.map_fits[4].data
+            self.cluster_centers = self.map_fits[6].data
+            self.cluster_centers = np.column_stack((self.cluster_centers['xbin'], self.cluster_centers['ybin']))
+            # self.map_n = self.map_header['MAP_N']
+
+            print("masking data with less than {} frames".format(min_nframes))
+            self.min_nframes = min_nframes
+            idx = self.numframes > min_nframes
+            self.mask = idx
+            self.data[~idx] = np.nan
+            self.datavar[~idx] = np.nan
+            self.datanormvar[~idx] = np.nan
+
+            self.normdata = self.data / np.nansum(self.data, axis=(0))[None,:]
+            self.nfib = self.normdata.shape[1]
+
+            import pickle
+            self.vor = pickle.load(open(self.map_header['VORONOI'], 'rb'))
+        
+        if model is not None:
+            print("loading model")
+            self.model_fits = fits.open(model)
+            self.model_coeffs = self.model_fits[0].data
+            # print(np.shape(self.model_coeffs))
+            self.model_header = self.model_fits[0].header
+            self.normdata = self.model_fits[1].data
+            self.datavar = self.model_fits[2].data
+            self.datanormvar = self.model_fits[3].data
+            self.cluster_centers = self.model_fits[4].data
+            # print(self.cluster_centers, np.shape(self.cluster_centers), type(self.cluster_centers))
+            self.cluster_centers = np.column_stack((self.cluster_centers['xbin'], self.cluster_centers['ybin']))
+            self.chi2 = self.model_fits[5].data
+            self.numframes = self.model_fits[6].data
+            # self.pos_mas = np.linspace(self.model_header['XMIN'], self.model_header['XMAX'], self.model_header['MAP_N'])
+            # self.map_n = self.model_header['MAP_N']
+            self.nfib = self.normdata.shape[1]
+
+            self.x_flat = self.cluster_centers[:,0]
+            self.y_flat = self.cluster_centers[:,1]
+
+            X_poly = poly_design_matrix(self.x_flat, self.y_flat, self.model_header['NPOLY1'])
+            self.wav_reconrange = np.arange(self.model_header['MIN_WAV'], self.model_header['MAX_WAV']+1)
+            self.all_modeled_recons = np.zeros((len(self.cluster_centers), self.nfib, len(self.wav_reconrange)))
+            import pickle
+            self.vor = pickle.load(open(self.model_header['VORONOI'], 'rb'))
+            
+            for fibind in range(self.nfib):
+                # print(fibind)
+                for specind in range(len(self.wav_reconrange)):
+                    coeffs = self.model_coeffs[fibind, specind]
+                    recon = np.dot(X_poly, coeffs)
+                    self.all_modeled_recons[:,fibind,specind] = recon
+        
+        if coeff_model is not None:
+
+            print("Loading coefficients from separate model")
+            self.model_fits2 = fits.open(coeff_model)
+            self.model_coeffs = self.model_fits2[0].data
+            self.model_header = self.model_fits2[0].header
+
+
+    def make_polynomial_model(self, output_name,
+                              wav_fitrange, wav_reconrange,
+                              poly_deg_spatial = 9,
+                              poly_deg_spectral = 9,
+                              weighted = True):
+        
+        all_modeled_coeffs, all_modeled_recons, all_map_inputs = [], [] ,[]
+
+        for fibind in tqdm(range(self.nfib)):
+
+            modeled_coeffs, modeled_recon, all_map_input = make_interpolation_model_irregular(self.normdata[:,fibind,:], 
+                                                                                    self.cluster_centers[:,0],
+                                                                                    self.cluster_centers[:,1],
+                                                                                    wav_fitrange = wav_fitrange, 
+                                                                                    wav_reconrange = wav_reconrange, 
+                                                                                    poly_deg_spatial = poly_deg_spatial,
+                                                                                    poly_deg_spectral = poly_deg_spectral,
+                                                                                    variance_map= self.datanormvar[:,fibind,:],
+                                                                                    weighted = weighted)
+            
+            all_modeled_coeffs.append(modeled_coeffs)
+            all_modeled_recons.append(modeled_recon)
+            all_map_inputs.append(all_map_input)
+
+        all_modeled_coeffs = np.array(all_modeled_coeffs)
+        all_modeled_recons = np.array(all_modeled_recons)
+        all_map_inputs = np.array(all_map_inputs)
+
+
+        all_modeled_recons = np.transpose(all_modeled_recons, axes = (2,0,1))
+        all_map_inputs = np.transpose(all_map_inputs, axes = (2,0,1))
+
+        self.all_modeled_recons = all_modeled_recons
+
+        # compute chi2
+        self.model_chi2 = (all_map_inputs - all_modeled_recons)**2 / self.datanormvar[:,:,wav_reconrange]
+
+
+        if output_name is not None:
+            hdu = fits.PrimaryHDU(all_modeled_coeffs)
+            hdu.header['NFIB'] = self.nfib
+            # hdu.header['XMIN'] = min(self.pos_mas)
+            # hdu.header['XMAX'] = max(self.pos_mas)
+            # hdu.header['MAP_N'] = len(self.pos_mas)
+            hdu.header['NPOLY1'] = poly_deg_spatial
+            hdu.header['NPOLY2'] = poly_deg_spectral
+            hdu.header['WEIGHTED'] = weighted
+            hdu.header['EXTNAME'] = 'coeffs'
+            hdu.header['MIN_WAV'] = min(wav_reconrange)
+            hdu.header['MAX_WAV'] = max(wav_reconrange)
+            hdu.header['VORONOI'] = self.map_header['VORONOI']
+
+            ## adding mask here
+            mask = ~np.isnan(self.datavar[:,:,wav_reconrange])
+
+            hdu2 = fits.ImageHDU(all_map_inputs * mask)
+            hdu2.header['EXTNAME'] = 'data'
+
+            hdu3 = fits.ImageHDU(self.datavar[:,:,wav_reconrange] * mask)
+            hdu3.header['EXTNAME'] = 'var'
+
+            hdu4 = fits.ImageHDU(self.datanormvar[:,:,wav_reconrange] * mask)
+            hdu4.header['EXTNAME'] = 'normvar'
+
+            hdu5 = self.map_fits[6].copy()
+            hdu5.header['EXTNAME'] = 'cluster_centers'
+
+            hdu6 = fits.ImageHDU(self.model_chi2)
+            hdu6.header['EXTNAME'] = 'chi2'
+
+            hdu7 = fits.ImageHDU(self.numframes)
+            hdu7.header['EXTNAME'] = 'numframes'
+            hdu7.header['MIN_N'] = self.min_nframes
+
+            hdulist = fits.HDUList([hdu, hdu2, hdu3, hdu4, hdu5, hdu6, hdu7])
+            hdulist.writeto(output_name+'.fits', overwrite=True)
+            print(output_name+'.fits saved')
+
+        self.all_map_inputs = all_map_inputs
+        self.all_modeled_coeffs = all_modeled_coeffs
+
+        self.wav_reconrange = wav_reconrange
+        self.wav_fitrange = wav_fitrange
+        
+        return all_map_inputs, all_modeled_recons, all_modeled_coeffs, self.model_chi2
+

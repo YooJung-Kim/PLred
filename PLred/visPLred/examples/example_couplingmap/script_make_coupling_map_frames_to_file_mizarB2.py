@@ -29,9 +29,9 @@ sd = cm.SimultaneousData(firstcam_timestamp_path, firstcam_spec_path,
 
 
 sd.compute_psfcam_centroids(peak=True)
-sd.bin_by_centroids(15, 3, calculate_variance = False,
+sd.bin_by_centroids(25, 3, calculate_variance = False,
                     to_file = True,
-                    filename = '/mnt/datazpool/PL/yjkim/remapped/mizarB2_20250514/remapped')#, return_bootstrap_samples= True)
+                    filename = '/mnt/datazpool/PL/yjkim/remapped/mizarB2_20250514_highres/remapped')#, return_bootstrap_samples= True)
 
 # sd.save(f'betcmi_20250211_couplingmap_frames_{obs_start}_{obs_end}.fits')
 # sd.save_bootstrap_frames(f'betcmi_20250211_couplingmap_frames_{obs_start}_{obs_end}')

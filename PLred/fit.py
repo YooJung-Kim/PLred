@@ -3,7 +3,7 @@ from astropy.io import fits
 import matplotlib.pyplot as plt
 
 from .imgrecon import CouplingMapImageReconstructor, PointSourceFitter, GaussianBlobFitter, DiskFitter
-from .mapmodel import CouplingMapModel
+from .mapmodel import CouplingMapModel, VoronoiCouplingMapModel
 
 # here I intend to add model fitting as well
 
@@ -11,22 +11,33 @@ class PLMapFit:
 
     # Image reconstruction class
 
-    def __init__(self, matrix_file = None, model_file = None, image_ngrid = None, image_fov = None, n_trim = None):
+    def __init__(self, matrix_file = None, model_file = None, image_ngrid = None, image_fov = None, n_trim = None,
+                 use_voronoi = False, fov_radius = None):
 
         if matrix_file is not None:
             self.load_matrix_from_file(matrix_file)
         
         else:
-
+            
+            if use_voronoi : n_trim = 0
             assert model_file is not None, "Model file is required to create a new matrix"
             assert (image_ngrid is not None) and (image_fov is not None) and (n_trim is not None), "image_ngrid, image_fov, n_trim are required to create a new matrix"
             
             self.model_file = model_file
-            self.mapmodel = CouplingMapModel(model = model_file)
-            self.mapmodel.set_grid_param(image_ngrid, image_fov, n_trim)
 
-            self.n_trim = n_trim
-        
+            if not use_voronoi:
+                self.mapmodel = CouplingMapModel(model = model_file)
+                self.mapmodel.set_grid_param(image_ngrid, image_fov, n_trim)
+
+                self.n_trim = n_trim
+                self.use_voronoi = False
+            else:
+                self.mapmodel = VoronoiCouplingMapModel(model = model_file)
+                self.mapmodel.set_grid_param(image_ngrid, image_fov, 0)
+                self.n_trim = 0
+                self.use_voronoi = True
+                self.fov_radius = fov_radius
+            
 
     def prepare_data(self, fiber_inds, specind = None):
 
@@ -34,15 +45,32 @@ class PLMapFit:
             specind = self.mat_specind
             print("preparing data for specind", specind)
 
-        if self.n_trim > 0:
-            observed = self.mapmodel.normdata[self.n_trim:-self.n_trim,self.n_trim:-self.n_trim,fiber_inds, specind]
-            observed_err = self.mapmodel.datanormvar[self.n_trim:-self.n_trim,self.n_trim:-self.n_trim,fiber_inds, specind]
-        else:
-            observed = self.mapmodel.normdata[:,:,fiber_inds, specind]
-            observed_err = self.mapmodel.datanormvar[:,:,fiber_inds, specind]
+        if not self.use_voronoi:
+            if self.n_trim > 0:
+ 
+                observed = self.mapmodel.normdata[self.n_trim:-self.n_trim,self.n_trim:-self.n_trim,fiber_inds, specind]
+                observed_err = self.mapmodel.datanormvar[self.n_trim:-self.n_trim,self.n_trim:-self.n_trim,fiber_inds, specind]
+            else:
+                
+                observed = self.mapmodel.normdata[:,:,fiber_inds, specind]
+                observed_err = self.mapmodel.datanormvar[:,:,fiber_inds, specind]
 
-        observed = np.transpose(observed, (2,0,1)).flatten()
-        observed_err = np.sqrt(np.transpose(observed_err, (2,0,1)).flatten())
+            observed = np.transpose(observed, (2,0,1)).flatten()
+            observed_err = np.sqrt(np.transpose(observed_err, (2,0,1)).flatten())
+        else:
+
+            observed = self.mapmodel.normdata[:, fiber_inds, specind]
+            observed_err = self.mapmodel.datanormvar[:, fiber_inds, specind]
+
+            if self.fov_radius is not None:
+                fov_mask = self.mapmodel.cluster_centers[:,0] ** 2 + self.mapmodel.cluster_centers[:,1] ** 2 < self.fov_radius**2
+                observed[~fov_mask] = np.nan
+                observed_err[~fov_mask] = np.nan
+                print("FoV masking, eliminating %d pixels" % np.sum(~fov_mask))
+
+            observed = np.transpose(observed, (1,0)).flatten()
+            observed_err = np.sqrt(np.transpose(observed_err, (1,0)).flatten())
+
 
         self.observed = observed
         self.observed_err = observed_err

@@ -511,6 +511,15 @@ class SpectrumModel:
             np.save(self.modelname+'/trace.npy', self.trace_poly_coeffs)
             print(self.modelname+'/trace.npy saved')
 
+            np.save(self.modelname+'/trace_vals.npy', self.trace_vals)
+            print(self.modelname+'/trace_vals.npy saved')
+
+            import json
+            trace_info = {'xmin': self.XMIN, 'xmax': self.XMAX, 'poly_deg': poly_deg}
+            with open(self.modelname+'/trace_info.json', 'w') as f:
+                json.dump(trace_info, f)
+            print(self.modelname+'/trace_info.json saved')
+
 
     def plot_traces(self):
 

@@ -471,11 +471,11 @@ class NonlinearityFitter:
 
 class DetectorNonlinearityModel:
 
-    def __init__(self, modelname=None):
+    def __init__(self, modelname=None, verbose=False):
 
         if modelname is not None:
             self.model = np.load(modelname+'.npz')
-            print(f"Model loaded from {modelname}.npz")
+            if verbose: print(f"Model loaded from {modelname}.npz")
 
     def create_model(self, observed_ims, corrected_ims, refind = -1, mincounts=300, tol=1, improvement_ratio=5, max_trials=None, plot=False):
         # nx, ny = observed_ims.shape[1:3]
@@ -606,8 +606,8 @@ class DetectorNonlinearityModel:
 
     def correct_map(self, observed_map, max_workers=8):
 
-        import time
-        start_t = time.time()
+        # import time
+        # start_t = time.time()
 
         corrected_map = np.copy(observed_map)
         status = np.zeros_like(observed_map, dtype=int)
@@ -646,6 +646,6 @@ class DetectorNonlinearityModel:
             corrected_map[x, y] = val
             status[x, y] = 0
 
-        end_t = time.time()
-        print("time elapsed: ", end_t - start_t)
+        # end_t = time.time()
+        # print("time elapsed: ", end_t - start_t)
         return corrected_map, status
