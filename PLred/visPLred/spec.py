@@ -6,10 +6,6 @@ import os
 from scipy.interpolate import griddata, interp1d
 from PLred.imageutils import find_3point_peak, find_9point_peak_2d, iter_find_blob, apply_patch, find_centroid, shift_image_fourier, shift_image_warpaffine
 
-# need to store this information somewhere else, maybe in the config file
-# model_savedir = '/home/first/yjkim/visPL_tests/conf/models/'
-
-
 
 def shift_spectrum(spectrum, shift):
     # Fourier transform
@@ -654,10 +650,6 @@ class SpectrumModel:
 
     def make_cutout_LSF(self, fibind, wavind, gridsize = 21, blob_find_width = 3, blob_thres = 8e-3, blob_maxwidth = 8,
                             display_extended_width = 5, plot = True,
-                            # use_center_of_mass = False,
-                            # use_25point_peak = False,
-                            # use_9point_peak = False,
-                            shift_method = 'warpaffine',
                             centroid_thres = 1):
         
         import cv2
@@ -679,16 +671,8 @@ class SpectrumModel:
         shift_x, shift_y = 0, np.round(on_interp) - on_interp
 
         # shift the image
-        if shift_method == 'warpaffine':
-            shifted_blob = shift_image_warpaffine(masked_im, shift_x, shift_y)
-        elif shift_method == 'fft':
-            shifted_blob = shift_image_fourier(masked_im, shift_x, shift_y, oversample_factor = 2, npad = 10)
-        else:
-            raise ValueError("shift_method should be either 'warpaffine' or 'fft'")
-        
-        # M = np.float32([[1,0,shift_x], [0,1,shift_y]])
-        # shifted_blob = cv2.warpAffine(masked_im, M, (masked_im.shape[1], masked_im.shape[0]))
-    
+        shifted_blob = shift_image_warpaffine(masked_im, shift_x, shift_y)
+
         # post on regular grid
         regular_grid = np.zeros((gridsize, gridsize))
         regular_grid[
@@ -998,24 +982,4 @@ class SpectrumModel:
             print("couldn't load the info.")
 
         print("model loaded from", self.modelname+'/'+filename)
-
-
-if __name__ == '__main__':
-
-    plt.ion()
-
-    sm = SpectrumModel(neonfile = '../neon_data_240914.npy', flatfile = '../flat_data_240917.npy',
-                       modelfile = 'LSF_model2.npz',
-                       tracefile = 'trace.npy')
-    
-    # do steps below if tracefile doesn't exist
-
-    # sm.find_peaks()
-    # sm.trace_spectra(3)
-
-    # do steps below if modelfile doesn't exist
-    # sm.make_clean_LSF_models(gridsize= 15, blob_thres = 1.2e-2)
-
-    # to check if making synthetic LSFs works,
-    # sm.make_synthetic_LSFs(sm.XMIN, sm.XMAX, plot = True, xstep = 25)
 

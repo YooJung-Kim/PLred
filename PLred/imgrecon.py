@@ -246,41 +246,6 @@ class BaseImageReconstructor:
             self.central_fracs = []
         else:
             self.current_central_frac = None
-    
-    # def set_initial_state_central_frac(self, central_frac):
-
-    #     if self.ini_method == 'random':
-    #         # random locations
-    #         element_xs = np.random.choice(self.axis_len, size = self.n_element)
-    #         element_ys = np.random.choice(self.axis_len, size = self.n_element)
-    #         self.locs = self.axis_len * element_xs + element_ys
-        
-    #     elif self.ini_method == 'center':
-    #         self.locs = np.array([self.centerloc] * self.n_element)
-
-    #     self.n_fixed = int((self.n_element * central_frac)/ (1 - central_frac))
-    #     print("Fixing %d elements to the center. %d elements are free to move" % (self.n_fixed, self.n_element))
-    #     self.locs = list(np.concatenate([self.locs, [self.centerloc]*self.n_fixed]))
-        
-    #     # compute vector from locs
-    #     self.current_vec = self.compute_model_from_locs(self.locs)
-        
-    #     # compute initial log likelihood
-    #     self.current_ll = self.compute_ll(self.current_vec)
-
-    #     # initial temperature
-    #     self.temp = self.ini_temp
-
-    #     self.lls = [self.current_ll]
-    #     self.temps = [self.temp]
-    #     self.post_locs = np.array([], dtype=int)
-    #     self.all_post_locs = np.array([], dtype=int)
-
-    #     # if self.model_central_frac:
-    #     #     self.current_central_frac = 0.5
-    #     #     self.central_fracs = []
-    #     # else:
-    #     #     self.current_central_frac = None
 
     
     def compute_model_from_locs(self, locs, normalize = True):
@@ -447,42 +412,11 @@ class BaseImageReconstructor:
         else:
             raise ValueError("move_scheme not recognized")
     
-    # def run_chain_with_central_frac(self, niter, central_frac, plot_every = 100):
-
-    #     self.niter = niter
-
-    #     self.set_initial_state_central_frac(central_frac)
-    #     self.central_frac = central_frac
-
-    #     for iter in tqdm(range(self.niter)):
-            
-    #         # attempt flux element move
-    #         for ni in range(self.n_element):
-
-    #             self.move_element(ni)
-                
-
-    #         # store the results
-    #         self.lls.append(self.current_ll)
-    #         self.temps.append(self.temp)
-    #         self.post_locs = np.concatenate((self.post_locs, self.locs))
-            
-    #         if iter > self.burn_in_iter:
-    #             self.all_post_locs = np.concatenate((self.all_post_locs, self.locs))
-
-    #         if iter % plot_every == 0:
-    #             self.plot_current_state()
-
-    #     # compute final recovered parameters
-    #     self.final_image = locs2image(self.all_post_locs, self.axis_len)
-    #     self.final_vec = (self.matrix @ self.final_image.flatten()) / len(self.all_post_locs)
-    #     self.plot_final_state(self.final_image)
-
-    #     print("Done")
 
     def run_chain(self, niter, central_frac = None, plot_every = 100,
                   move_ratio = 0.95,
-                  small_to_random_ratio = 0):
+                  small_to_random_ratio = 0,
+                  plot = False):
         '''
         Run the MCMC chain
         
@@ -516,12 +450,12 @@ class BaseImageReconstructor:
                 self.all_post_locs = np.concatenate((self.all_post_locs, self.locs))
 
             if iter % plot_every == 0:
-                self.plot_current_state()
+                if plot: self.plot_current_state()
 
         # compute final recovered parameters
         self.final_image = locs2image(self.all_post_locs, self.axis_len)
         self.final_vec = (self.matrix @ self.final_image.flatten()) / len(self.all_post_locs)
-        self.plot_final_state(self.final_image)
+        if plot: self.plot_final_state(self.final_image)
 
         print("Done")
 
@@ -544,8 +478,6 @@ class CouplingMapImageReconstructor(BaseImageReconstructor):
                  seed = 123456,
                  regul_dict = {},
                  loglevel = logging.INFO,
-                #  do_entropy_regul = False,
-                #  entropy_regul_coeff = 1e-4
                  ):
         super().__init__(matrix, data, data_err, outname,
                          axis_len = axis_len,
@@ -562,9 +494,7 @@ class CouplingMapImageReconstructor(BaseImageReconstructor):
                          seed = seed,
                          regul_dict = regul_dict,
                          loglevel=loglevel)
-        
-        # self.do_entropy_regul = do_entropy_regul
-        # self.entropy_regul_coeff = entropy_regul_coeff
+
         
     def compute_ll(self, vec):
         '''
@@ -575,10 +505,7 @@ class CouplingMapImageReconstructor(BaseImageReconstructor):
         # chi^2 / 2
         current_ll = np.nansum((current_observable - self.data)**2 / self.data_err**2) / self.ndf_cor / 2
         
-        # if with_regul:
-        #     if self.do_entropy_regul:
-        #         ent = entropy(vec)
-        #         current_ll += self.entropy_regul_coeff * ent
+
         return current_ll
 
 import emcee
@@ -690,31 +617,6 @@ class BaseModelFitter:
         self.sampler = emcee.EnsembleSampler(self.nwalkers, self.nparams, self.compute_ll)
         self.sampler.run_mcmc(pos, niter, progress=True)
 
-    
-    # def set_initial_state(self, ini_params, nwalkers = 10):
-    #     '''
-    #     sets initial state for the MCMC chain
-    #     self.current_vec, self.current_ll, self.temp are set
-    #     '''
-
-    #     # compute vector from locs
-    #     self.current_vec = self.compute_model_from_params(ini_params)
-        
-    #     # compute initial log likelihood
-    #     self.current_ll = self.compute_ll(ini_params)
-
-    #     # initial temperature
-    #     # self.temp = self.ini_temp
-
-    #     self.lls = [self.current_ll]
-    #     # self.temps = [self.temp]
-
-    #     self.params = [ini_params]
-    #     self.all_params = [ini_params]
-
-    #     self.nparams = len(ini_params)
-
-    #     self.sampler = emcee.EnsembleSampler(nwalkers, self.nparams, self.compute_ll)
     
     def plot_current_state(self):
         '''
@@ -978,319 +880,3 @@ class GaussianBlobFitter(BaseModelFitter):
             
             
         return super().compute_ll(params)
-
-class PolyBaseModelFitter(BaseModelFitter):
-    '''
-    Base class for wavelength-dependent model fitting
-    '''
-
-    def __init__(self, matrices, data_list, data_err_list, outname,
-                 axis_len = 33,
-                 burn_in_iter = 200,
-                 seed = 123456,
-                 loglevel = logging.INFO,
-                 nwalkers = 10,
-
-                 ):
-        
-        # Define the model fitters for each matrix
-        self.ModelFitters = [
-            BaseModelFitter(matrix, data, data_err, outname,
-                            axis_len = axis_len,
-                            burn_in_iter = burn_in_iter,
-                            seed = seed,
-                            loglevel=loglevel)
-            for matrix, data, data_err in zip(matrices, data_list, data_err_list)
-        ]
-
-        self.data = data_list
-        self.data_err = data_err_list
-
-        self.nwav = len(matrices)
-        self.nwalkers = nwalkers
-
-        self.outname = outname
-
-        logging.basicConfig(level = loglevel, format='%(asctime)s - %(levelname)s - %(message)s')
-
-    # def compute_ll(self, params):
-    #     '''
-    #     compute the log likelihood of the model given the parameters
-    #     '''
-    #     # raise NotImplementedError("compute_ll must be overridden")
-    #     current_observable = self.compute_model_from_params(params)
-
-    #     # -chi^2 / 2
-    #     current_ll = -0.5 * np.nansum((current_observable - self.data)**2 / self.data_err**2) #/ self.ndf / 2
-    #     return current_ll
-    
-    # def compute_ll(self, params):
-    #     '''
-    #     compute the log likelihood of the model given the parameters
-    #     '''
-
-
-    #     # raise NotImplementedError("compute_ll must be overridden")
-        
-    #     # lls = np.zeros(self.nwav)
-    #     # for wavind in range(self.nwav):
-    #     #     # compute log likelihood for each wavelength
-
-    #     #     current_observable = self.compute_model_from_params(params)
-    #     #     current_ll = -0.5 * np.nansum((current_observable - self.data_list[wavind])**2 / self.data_err_list[wavind]**2) #/ self.ndf / 2
-    #     #     # compute the model vector from the parameters
-    #     #     # self.ModelFitters[wavind].current_vec = self.ModelFitters[wavind].compute_model_from_params(params[wavind])
-    #     #     # compute initial log likelihood
-    #     #     lls[wavind] = current_ll #self.ModelFitters[wavind].compute_ll(params)
-        
-    #     # # current_observable = self.compute_model_from_params(params)
-
-    #     # # -chi^2 / 2
-    #     # # current_ll = -0.5 * np.nansum((current_observable - self.data)**2 / self.data_err**2) #/ self.ndf / 2
-    #     # return np.sum(lls) #current_ll
-    
-    # def compute_model_from_params(self, params):
-    #     '''
-    #     compute the model vector from the parameters
-    #     '''
-    #     raise NotImplementedError("compute_model_from_params must be overridden")
-    
-    # def run_chain(self, niter, ini_params, ini_ball_size = 1e-3, plot_every=100):
-
-    #     self.nparams = len(ini_params)
-    #     self.niter = niter
-
-    #     pos = np.random.normal(ini_params, ini_ball_size, size=(self.nwalkers, self.nparams))
-    #     self.sampler = emcee.EnsembleSampler(self.nwalkers, self.nparams, self.compute_ll)
-    #     self.sampler.run_mcmc(pos, niter, progress=True)
-
-from PLred.scene import make_simple_powerlaw_disk, get_iso_velocity_map
-class DiskFitter(PolyBaseModelFitter):
-
-
-
-    def __init__(self, fixed_params, vgrid, matrices, data_list, data_err_list, outname,
-                 apply_point_source_fraction = False,
-                 point_source_fracs = None,
-                 axis_len = 33,
-                 image_fov = 20,
-                 burn_in_iter = 200,
-                 seed = 123456,
-                 loglevel = logging.INFO
-                 ):
-        '''
-        Disk fitter
-        fixed_params: dictionary of fixed parameters for the disk model
-        vgrid: velocity grid for the disk model
-        matrices: list of matrices for each wavelength
-        data_list: list of data for each wavelength
-        data_err_list: list of data errors for each wavelength
-
-        Disk params include
-        - Vrot
-        - Rstar
-        - Rout
-        - power_index
-        - incl_angle
-        - PA
-        - beta
-        '''
-        super().__init__(matrices, data_list, data_err_list, outname,
-                         axis_len = axis_len,
-                         burn_in_iter = burn_in_iter,
-                         seed = seed,
-                         loglevel=loglevel)
-        
-
-        
-        # grid where the disk will be defined
-        self.xa = np.linspace(-image_fov/2, image_fov/2, axis_len)
-        self.yg, self.xg = np.meshgrid(self.xa, self.xa, indexing='ij')
-
-        self.vgrid = vgrid
-        self.axis_len = axis_len
-        self.image_fov = image_fov
-
-        self.apply_point_source_fraction = apply_point_source_fraction
-        if apply_point_source_fraction:
-            assert point_source_fracs is not None, "point_source_fracs must be provided if apply_point_source_fraction is True"
-            self.point_source_fracs = point_source_fracs
-
-            
-
-        assert len(self.point_source_fracs) == self.nwav, "point_source_fracs must have the same length as the number of wavelengths"
-
-        self.disk_params = {
-            'Vrot': None if 'Vrot' not in fixed_params else fixed_params['Vrot'],
-            'Rstar': None if 'Rstar' not in fixed_params else fixed_params['Rstar'],
-            'Rout': None if 'Rout' not in fixed_params else fixed_params['Rout'],
-            'power_index': None if 'power_index' not in fixed_params else fixed_params['power_index'],
-            'incl_angle': None if 'incl_angle' not in fixed_params else fixed_params['incl_angle'],
-            'PA': None if 'PA' not in fixed_params else fixed_params['PA'],
-            'beta': None if 'beta' not in fixed_params else fixed_params['beta'],
-        }
-
-        self.fixed_params = fixed_params
-        self.free_params = {k: v for k, v in self.disk_params.items() if v is None}
-        self.fixed_params = {k: v for k, v in self.disk_params.items() if v is not None}
-        self.free_param_keys = list(self.free_params.keys())
-
-
-    def params_dict_to_array(self, params_dict):
-        return np.array([params_dict[k] for k in self.free_param_keys])
-
-    def params_array_to_dict(self, params_array):
-        params_dict = self.fixed_params.copy()
-        params_dict.update({k: v for k, v in zip(self.free_param_keys, params_array)})
-        return params_dict
-
-    def compute_disk(self, params_array = None, plot=False): #, given_params_dict = False):
-
-        # if given_params_dict:
-            # only used for plot_current_state
-            # self.disk_params = params_array
-        
-        if params_array is not None:
-            # this is the default
-            params_dict = self.params_array_to_dict(params_array)
-            # override the disk parameters with the input params
-            self.disk_params['Vrot'] = params_dict['Vrot']
-            self.disk_params['Rstar'] = params_dict['Rstar']
-            self.disk_params['Rout'] = params_dict['Rout']
-            self.disk_params['power_index'] = params_dict['power_index']
-            self.disk_params['incl_angle'] = params_dict['incl_angle']
-            self.disk_params['PA'] = params_dict['PA']
-            self.disk_params['beta'] = params_dict['beta']
-
-        # compute the disk model
-        intenmap, velmap, _, _ = make_simple_powerlaw_disk(self.disk_params['Vrot'], 
-                                                    self.disk_params['Rstar'], 
-                                                    self.disk_params['Rout'], 
-                                                    self.disk_params['power_index'], 
-                                                    self.disk_params['incl_angle'], 
-                                                    self.disk_params['PA'], 
-                                                    self.disk_params['beta'],
-                                                    ngrid = self.axis_len,
-                                                    fov = self.image_fov,
-                                                    plot=plot)
-        
-        iso_map = get_iso_velocity_map(intenmap, velmap, self.vgrid)
-
-        return iso_map
-
-    def compute_model_from_params(self, params_array = None, return_image = False): #, given_params_dict = False):
-        
-        # if given_params_dict:
-        #     # only used for plot_current_state
-        #     params_dict = params_array
-        
-        # else:
-            # this is the default
-        
-        if params_array is not None:
-            params_dict = self.params_array_to_dict(params_array)
-        else:
-            params_dict = self.disk_params
-
-        # compute disk iso velocity map
-        iso_map = self.compute_disk(params_array)
-        iso_map = iso_map / np.nansum(iso_map, axis=(1,2))[:,None,None] # normalize the map
-
-        # compute stellar contribution
-        if self.apply_point_source_fraction:
-
-            star = np.sqrt(self.xg**2 + self.yg**2) < params_dict['Rstar']
-            star = star.astype(np.float32)
-            star = star / np.nansum(star) # normalize the fluxes
-
-            for wavind in range(self.nwav):
-                iso_map[wavind] *= (1 - self.point_source_fracs[wavind])
-                iso_map[wavind] += self.point_source_fracs[wavind] * star
-
-        if return_image:
-            # return the image instead of the model vector
-            return iso_map
-        
-        # compute the model vector from the parameters
-        vecs = np.array([self.ModelFitters[wavind].matrix @ iso_map[wavind].flatten() for wavind in range(self.nwav)])
-        return vecs
-
-    # def compute_ll(self, params_array):
-    #     params_dict = self.params_array_to_dict(params_array)
-    #     return super().compute_ll(params_array)
-
-    def run_chain(self, niter, ini_params, ini_ball_size = 1e-3, plot_every=100):
-
-        self.ini_params = ini_params
-
-        params_array = self.params_dict_to_array(ini_params)
-
-        return super().run_chain(niter, params_array, ini_ball_size = ini_ball_size, plot_every=plot_every)
-
-
-    def plot_current_state(self):
-        '''
-        overrides default plot_current_state to plot the disk model
-        '''
-        # print("plot_current_state called. params:", self.disk_params)
-        maps = self.compute_model_from_params(params_array = None, return_image=True)#, given_params_dict=True)
-
-        fig, axs = plt.subplots(ncols=len(maps), figsize=(len(maps)*2, 2), sharex=True, sharey=True)
-        for i, ax in enumerate(axs):
-            ax.imshow(maps[i])
-
-        rounded_disk_params = {key: round(value, 2) for key, value in self.disk_params.items()}
-        formatted_disk_params = ' '.join([f'{key}: {value}' for key, value in rounded_disk_params.items()])
-        formatted_disk_params += ' ll: %.3e' % self.current_ll
-        fig.suptitle("Current disk model. params: " + formatted_disk_params)
-        fig.savefig(self.outname+'_current_state.png')
-
-        fig = plt.figure()
-        ax = fig.add_subplot(111)
-        ax.plot(self.current_chi2_indiv)
-        ax.set_title('current chi2. avg:%.2f' % np.average(self.current_chi2_indiv))
-        fig.savefig(self.outname+'_current_chi2.png')
-
-    
-class PointSourceModel:
-
-    vectype = np.float32 # or np.complex_
-
-    def __init__(self, matrix, data, data_err, outname,
-                 gamma = 256,
-                 tau = 1e4,
-                 target_chi2 = 1,
-                 burn_in_iter = 200,
-                 ini_temp = 1,
-                 seed = 123456,
-                 loglevel = logging.INFO
-                 ):
-
-
-        # store matrix and data
-        self.matrix = matrix
-        self.data = data
-        self.data_err = data_err
-        self.len_vec = np.shape(matrix)[0]
-
-        # temperature schedule parameters
-        self.gamma = gamma
-        self.tau = tau
-        self.target_chi2 = target_chi2
-        self.ini_temp = ini_temp
-
-        # convergence parameters
-        self.burn_in_iter = burn_in_iter
-        self.ini_seed = seed
-        np.random.seed(seed)
-
-        self.outname = outname
-
-        logging.basicConfig(level = loglevel, format='%(asctime)s - %(levelname)s - %(message)s')
-
-    def compute_ll(self, pos):
-
-        (pos_x, pos_y) = pos
-
-        # compute the model vector from the locations
-        vec = np.zeros(self.len_vec, dtype = self.vectype)

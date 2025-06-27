@@ -18,8 +18,5 @@ firstcam_params = {
 
 palila_params = {
     'plate_scale'   : 16.2, # mas / pixel
-}
-
-vampires_params = {
-
+    'pa_offset'     : 2.7, # deg, offset for D_IMRPAD
 }
