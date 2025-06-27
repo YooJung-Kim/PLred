@@ -1,6 +1,7 @@
 # PLred
 
 Data reduction and image reconstruction tools for photonic lantern spectra.
+Main branch for publich release.
 
 ## Overview
 
