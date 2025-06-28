@@ -850,7 +850,7 @@ class FrameSorter:
         if plot:
 
             fig = plt.figure(figsize=(5,5))
-            plt.imshow(self.num_frames, origin='lower', extent = (self.xmin, self.xmax, self.ymin, self.ymax))
+            plt.imshow(self.num_frames, origin='upper', extent = (self.xmin, self.xmax, self.ymin, self.ymax))
             plt.xlabel('x (mas)')
             plt.ylabel('y (mas)')
             plt.colorbar()
