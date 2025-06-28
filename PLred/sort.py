@@ -447,7 +447,7 @@ def bin_by_centroids_to_file(outname, psfcamframes, plcam_file_indices, plcam_fr
             num_frames[i,j] = np.sum(idx)
 
             if num_frames[i,j] > 0:
-                print(np.shape(psfcamframes[idx]))
+                # print(np.shape(psfcamframes[idx]))
 
                 with h5py.File(outname+'_bin_%d_%d.h5' % (i,j), 'w') as h5f:
                     print("creating file %s" % (outname+'_bin_%d_%d.h5' % (i,j)))

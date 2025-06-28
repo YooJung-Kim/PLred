@@ -434,7 +434,7 @@ class NonlinearityFitter:
             x = self.x
         return self.best_fun(x, *self.best_params)
 
-    def plot(self, x=None, y=None):
+    def plot(self, x=None, y=None, show=False):
         if x is None:
             x = self.x
         if y is None:
@@ -449,10 +449,13 @@ class NonlinearityFitter:
         plt.title('Nonlinearity model')
         plt.xlabel('Observed counts')
         plt.ylabel('Corrected counts')
-        plt.savefig('nonlinearity_model.png')
-        plt.clf()
+        if not show:
+            plt.savefig('nonlinearity_model.png')
+            plt.clf()
+        if show:
+            plt.show()
 
-    def plot_ratio(self, x=None, y=None):
+    def plot_ratio(self, x=None, y=None, show=False):
         if x is None:
             x = self.x
         if y is None:
@@ -466,8 +469,11 @@ class NonlinearityFitter:
         plt.title('Nonlinearity model')
         plt.xlabel('Observed counts')
         plt.ylabel('Corrected counts / Observed counts')
-        plt.savefig('nonlinearity_model_ratio.png')
-        plt.clf()
+        if not show:
+            plt.savefig('nonlinearity_model_ratio.png')
+            plt.clf()
+        if show:
+            plt.show()
 
 class DetectorNonlinearityModel:
 

@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import os
 from scipy.interpolate import griddata, interp1d
-from PLred.imageutils import find_3point_peak, find_9point_peak_2d, iter_find_blob, apply_patch, find_centroid, shift_image_fourier, shift_image_warpaffine
+from PLred.imageutils import find_3point_peak, find_9point_peak_2d, iter_find_blob, apply_patch, find_centroid, shift_image_warpaffine
 
 
 def shift_spectrum(spectrum, shift):
