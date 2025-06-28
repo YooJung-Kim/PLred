@@ -1,3 +1,5 @@
+# Codes related to polynomial interpolation of coupling map data.
+
 import numpy as np
 import matplotlib.pyplot as plt
 from astropy.io import fits

@@ -14,58 +14,7 @@ diameter = telescope_params['diameter']
 NFIB = firstcam_params['NFIB']
 zaber_microns = firstcam_params['zaber_microns']
 
-def find_data_between(datadir, obs_start, obs_end,
-                      header = '', footer = ''):
 
-    '''
-    Find data between (obs_start) and (obs_end) times, in format of %H:%M:%S.
-    The name of the file should contain the timestamp
-
-    Parameters
-    ----------
-    datadir : str
-        path to the directory containing the data files
-    obs_start : str (%H:%M:%S)
-        start time of the observation
-    obs_end : str (%H:%M:%S)
-        end time of the observation
-    header : str
-        prefix of the data files
-    footer : str
-        suffix of the data files
-
-    Returns
-    -------
-    valid_files : list
-        list of files that are between the start and end times
-
-    '''
-
-    start = datetime.strptime(obs_start, "%H:%M:%S")
-    end = datetime.strptime(obs_end, "%H:%M:%S")
-
-    files = glob.glob(datadir+header+'*'+footer)
-    files = sorted(files)
-
-    pattern = r"(\d{2}:\d{2}:\d{2}\.\d+)"
-
-    valid_files = []
-
-    for f in files:
-
-        match = re.search(pattern, f)
-
-        if match:
-            obstime = match.group(1)
-            obstime = datetime.strptime(obstime[:13], "%H:%M:%S.%f")
-
-            if (obstime > start) and (obstime < end):
-
-                valid_files.append(f)
-
-    print("number of files found: %d" % len(valid_files))
-    
-    return valid_files
 
 def average_frames(files, verbose = False):
     '''

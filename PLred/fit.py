@@ -1,3 +1,6 @@
+# General fitting class for PLred coupling maps
+# a wrapper to fit.py
+
 import numpy as np
 from astropy.io import fits
 import matplotlib.pyplot as plt
