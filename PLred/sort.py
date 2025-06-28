@@ -83,6 +83,7 @@ def script_match_timestamps(configname):
         obs_date            = 20250211
         start_time          = 11:59:00
         end_time            = 12:20:09
+        dark_file           = # if empty, dark_start_time and dark_end_time are used
         dark_start_time     = 12:23:04
         dark_end_time       = 12:23:05
         path                = /mnt/sdata/20250211/palila/
@@ -121,8 +122,8 @@ def script_match_timestamps(configname):
     outname = config['Output']['outname']
     filename = config['Output']['filename']
 
-    verbose = bool(config['Options']['verbose'])
-    show_plot = config['Options']['show_plot']
+    verbose = (config['Options']['verbose']).lower() == 'true'
+    show_plot = (config['Options']['show_plot']).lower() == 'true'
     crop_width = int(config['Options']['crop_width'])
 
     os.makedirs(outname, exist_ok=True)
@@ -833,7 +834,7 @@ class FrameSorter:
             infodict = {'xmin': self.xmin, 'ymin': self.ymin, 'xmax': self.xmax, 'ymax': self.ymax, 'map_n': map_n, 'map_w': map_width, 'pix2mas': self.pix2mas}
             json.dump(infodict, open(filename+'_info.json', 'w'))
             print("Info Saved to %s" % filename+'_info.json')
-            self.psfcam_binned_frames, self.num_frames, self.idxs = bin_by_centroids_to_file(filename, psfcam_frames, plcam_file_indices, plcam_frame_indices, self.plcam_files, centroids, xbins, ybins, skip_frame_reading=skip_frame_reading)
+            self.psfcam_binned_frames, self.num_frames, self.idxs = bin_by_centroids_to_file(filename, psfcam_frames, plcam_file_indices, plcam_frame_indices, self.plcam_files, self.ny, self.nx, centroids, xbins, ybins, skip_frame_reading=skip_frame_reading)
             # return      
             
         # # this is used for bootstrap later
