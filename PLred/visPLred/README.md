@@ -1,44 +1,39 @@
 # visPLred
 
+Module for FIRST-PL frame calibration and spectral extraction.
+
 ## Overview
 
-This module performs the following tasks:
+visPLred handles the critical **Step 2: Spectral Extraction** of the PLred pipeline, extracting spectra from sorted PL frames. This module performs the following tasks:
 
-1. **Generates spectrum model from Neon lamp and flat data**
-   - **Input:** Neon data, flat data
-   - **Output:** Model files
+### Preprocessing & Calibration
+1. **Nonlinearity Correction Model Generation**
+   - **Input:** Calibration data, flat fields of multiple integration times
+   - **Output:** Detector nonlinearity correction models
+   - **Tutorial:** `pre1_nonlinearity_correction.ipynb`
 
-2. **Extracts spectrum from visible PL raw frames using the spectrum model**
-   - **Input:** Raw FITS files (data chunk), .ini file
-   - **Output:** _spec.fits files (extracted spectrum), info file
+2. **Spectrum Model Creation**  
+   - **Input:** Neon lamp data, Reference high S/N frame
+   - **Output:** Spectrum models
+   - **Tutorial:** `pre2_spectrum_model.ipynb`
 
-3. **Constructs coupling maps from timestamp-matching data**
-   - **Input:** .ini file
-   - **Output:** Coupling map FITS file
+### Spectral Extraction ([Main Tutorial](tutorials/step2_spectral_extraction.ipynb))
+3. **Calibrated Spectrum Extraction**
+   - **Input:** Sorted PL frames (`.h5` files, from Step 1), nonlinearity models, spectrum models
+   - **Output:** Extracted spectra (`_spec.h5` files)
+   - **Key processes:** Dark subtraction, nonlinearity correction, spectral extraction, wavelength calibration
 
-
-
-## Usage
-Here is an example of how to use visPLred:
-```python
-import visPLred
-
-# Example code (to be added)
-```
 
 ## File Descriptions
 
+### `preprocess.py`
+Nonlinearity model generation and correction.
+
+### `spec.py` 
+Spectrum model generation and spectral extraction,
+
 ### `parameters.py`
-Stores fixed parameters relevant to visible PL data
-
-### `extract_spec.py`
-Generates spectrum model and extracts spectrum
-
-### `couplingmap.py`
-Constructs coupling maps
-
-### `sim.py`
-Simulation tools for visible PL
+Stores fixed parameters for FIRST-PL.
 
 ### `utils.py`
-Miscellaneous utility functions
+Miscellaneous functions.
