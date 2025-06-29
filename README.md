@@ -1,8 +1,9 @@
 # PLred
 
 Data reduction and image reconstruction tools for photonic lantern (PL) spectra.
+Sorts PL frames based on PSF peak coordinates, makes response maps, and reconstructs image.
 
-> **Structure:** PLred includes a submodule **`visPLred`** that handles all the calibration and spectral extraction functionality for the SCExAO/FIRST-PL. While PLred provides the general data processing tools including frame sorting and image reconstruction, visPLred contains the FIRST-PL-specific tools.
+> **Structure:** PLred includes a submodule **`visPLred`** that handles all the calibration and spectral extraction functionality for the SCExAO/FIRST-PL. After frame sorting, the outputs are used as inputs to **`visPLred`** which extracts spectra from the sorted frames. The extracted spectra are used as inputs to PLred again to make response maps and further image reconstruction. For any other instruments, their own spectral extraction tools can be used. PLred is intended to be independent of instruments.
 
 ## Installation
 
@@ -22,7 +23,7 @@ Follow the tutorial series to get started:
 - **Output:** Sorted frames data (`.h5` files), Frame sorting info (`_info.json`)
 - **Key processes:** Timestamp matching, PSF peak detection, grid definition, frame sorting
 
-### Step 2: Spectral Extraction ([Tutorial](PLred/visPLred/tutorials/step2_spectral_extraction.ipynb))
+### Step 2: Spectral Extraction (done in submodule `visPLred`; [Tutorial](PLred/visPLred/tutorials/step2_spectral_extraction.ipynb))
 **Extracts calibrated spectra from sorted PL frames**
 - **Input:** Sorted frame data (`.h5` files), nonlinearity models, spectrum models
 - **Output:** Extracted spectra (`_spec.h5` files)
@@ -60,3 +61,7 @@ Functions for fitting data to models and performing image reconstruction.
 
 #### `imageutils.py`
 Utility functions for image processing.
+
+## Contact
+
+Author: Yoo Jung Kim (yjkim@astro.ucla.edu)
