@@ -415,14 +415,20 @@ class BaseImageReconstructor:
     
 
     def run_chain(self, niter, central_frac = None, plot_every = 100,
-                  move_ratio = 0.95,
-                  small_to_random_ratio = 0,
+                  move_ratio = 1,
+                  small_to_random_ratio = 1,
                   plot = False):
         '''
         Run the MCMC chain
-        
+
         Parameters:
-        - niter : Number of iterations
+        --------
+        - niter : number of iterations
+        - central_frac : fraction of flux elements to be fixed at the center
+        - plot_every : plot the current state every this many iterations
+        - move_ratio : ratio of flux elements to be moved in each iteration. Otherwise try to move to the center.
+        - small_to_random_ratio : ratio of flux elements to be moved by small step (adjacent pixel) vs random move
+        - plot : whether to plot the current state every plot_every iterations
         '''
         self.niter = niter
 
@@ -514,9 +520,11 @@ import emcee
 class BaseModelFitter:
 
     '''
-    Model fitter using emcee.
+    Base Model fitter class.
     Regardless of the model, the scene is projected on a regular grid of pixels.
     "compute_model_from_params" should be implemented in a subclass of BaseModelFitter.
+
+    Run optimization by calling "run_optimization" method, or MCMC by calling "run_chain" method.
     '''
 
     vectype = np.float32 # or np.complex_

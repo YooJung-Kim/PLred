@@ -945,6 +945,25 @@ class FrameSorter:
 
 
 def make_responsemaps(filename, footer = '_spec', nfib = 38, nwav = 200, psfframe_shape = (40,40), nboot = 50):
+    '''
+    Make response files from _spec.h5 files.
+
+    Parameters
+    ----------
+    filename: str
+        name of the file to read the spectra from (header) and save the response map to (filename+ '_couplingmap.fits')
+    footer: str
+        footer of the file to read the spectra from (e.g. '_spec')
+    nfib: int
+        number of fibers in the spectra
+    nwav: int
+        number of wavelengths in the spectra
+    psfframe_shape: tuple
+        shape of the PSF frames (default: (40, 40))
+    nboot: int
+        number of bootstrap samples to generate (default: 50)
+    '''
+
 
     info = json.load(open(filename + '_info.json', 'r'))
     map_n = info['map_n']

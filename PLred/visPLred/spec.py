@@ -38,10 +38,6 @@ def extract_spec_box(traces, image, boxsize = 3):
         Traces for box extraction 
     image : np.ndarray
         Image to extract spectra from
-    xmin : int
-        Minimum x coordinate for spectral extraction
-    xmax : int
-        Maximum x coordinate for spectral extraction
     boxsize : int
         Box size for spectral extraction
 
@@ -209,6 +205,8 @@ def frame_to_spec(frame, xmin, xmax, wavmap = None,
         Used if variance image is not given
     thresh : float (optional)
         Threshold for damping
+    boxsize : int
+        Box size for box spectral extraction
     ref_ind : int
         Reference index for the wavelength map
     return_residual : bool
@@ -290,7 +288,7 @@ class SpectrumModel:
     def __init__(self, modelname, neonfile = None, flatfile = None):
 
         '''
-        Build visible PL spectrum model using Neon and Flat data.
+        Build FIRST-PL spectrum model using Neon and Flat data.
         Neon data is used for wavelength calibration and flat data is used to trace spectra.
         
         Workflow:
@@ -387,23 +385,6 @@ class SpectrumModel:
             for (x, y) in zip(self.ini_xs.flatten(), self.ini_ys.flatten()):
                 plt.plot(x, y, 'x', color='red')
             plt.title('Initial Neon line positions')
-
-    # def load_trace(self, tracefile):
-
-    #     trace_coeffs = np.load(tracefile)
-
-    #     self.trace_funcs = []
-    #     self.trace_vals = []
-    #     self.trace_poly_coeffs = []
-
-    #     for fibind in range(self.NFIB):
-    #         opt = trace_coeffs[fibind] 
-    #         fun = np.poly1d(opt)
-            
-    #         self.trace_funcs.append(fun)
-    #         self.trace_vals.append(fun(self.XARR))
-    #         self.trace_poly_coeffs.append(opt)
-
 
     def trace_spectra(self, ini_wav_ind, trace_width = 4, poly_deg = 5, verbose = False,
                       save = False):
@@ -526,8 +507,6 @@ class SpectrumModel:
             for f in self.vertical_trace_funcs:
                 plt.plot(f(self.YARR), self.YARR, color='yellow', alpha=0.3)
 
-    ### TODO: make trace along another direction as well, so that I don't have to measure centroids and center the postages
-    ### turns out that there's weird zig-zag pattern. something related to polarization?
 
     def fit_vertical_traces(self, wavinds, poly_deg = 3):
 
@@ -540,31 +519,29 @@ class SpectrumModel:
         self.VERTICAL_TRACE = True
 
 
-    # def load_LSF_model(self, modelname):
-
-    #     loaded = np.load(modelname, allow_pickle = True)
-
-    #     self.lsf_cutouts = loaded['cutouts']
-    #     self.lsf_xcoors = loaded['xcoors']
-    #     self.lsf_ycoors = loaded['ycoors']
-    #     self.lsf_flag = loaded['flag']
-    #     self.lsf_centroid_methods = loaded['method']
-
-    #     self.flat_lsf_xcoors = self.lsf_xcoors.flatten()
-    #     self.flat_lsf_ycoors = self.lsf_ycoors.flatten()
-    #     self.flat_lsf_cutouts = np.reshape(self.lsf_cutouts, newshape=(self.NFIB*self.NWAV, np.shape(self.lsf_cutouts)[2], np.shape(self.lsf_cutouts)[3]))
-
-    #     print("models loaded from", modelname)
-
-
     def make_clean_LSF_models(self, gridsize = 15, blob_find_width = 3, blob_thres = 1.2e-2, blob_maxwidth = 8,
-                            # use_center_of_mass = False,
-                            # use_25point_peak = False
                             centroid_thres = 1, 
                             save = False,
-                            # filename = 'LSF_model'
                             ):
-        
+        '''
+        Create clean LSF models from the cutouts.
+
+        Parameters
+        ----------
+        gridsize : int
+            Size of the cutout LSFs (gridsize x gridsize)
+        blob_find_width : int
+            Initial width for blob finding
+        blob_thres : float
+            Threshold for blob finding
+        blob_maxwidth : int
+            Maximum width for blob finding
+        centroid_thres : float
+            Threshold for centroid finding
+        save : bool
+            If True, save the models
+
+        '''
 
         os.makedirs(self.modelname+'/cutout_LSFs', exist_ok=True)
         # plt.tight_layout()
@@ -651,9 +628,31 @@ class SpectrumModel:
     def make_cutout_LSF(self, fibind, wavind, gridsize = 21, blob_find_width = 3, blob_thres = 8e-3, blob_maxwidth = 8,
                             display_extended_width = 5, plot = True,
                             centroid_thres = 1):
-        
-        import cv2
+        '''
+        Create a cutout LSF from the neon image.
 
+        Parameters
+        ----------
+        fibind : int
+            Fiber index
+        wavind : int
+            Wavelength index
+        gridsize : int
+            Size of the cutout LSF (gridsize x gridsize)
+        blob_find_width : int
+            Initial width for blob finding
+        blob_thres : float
+            Threshold for blob finding
+        blob_maxwidth : int
+            Maximum width for blob finding
+        display_extended_width : int
+            Width of the extended display area around the cutout
+        plot : bool
+            If True, plot the result
+        centroid_thres : float
+            Threshold for centroid finding
+
+        '''
 
         masked_im, x0, x1, y0, y1 = iter_find_blob(self.neon, self.ini_xs[fibind, wavind], self.ini_ys[fibind, wavind], 
                                                    ini_width=blob_find_width, thres=blob_thres,
@@ -711,6 +710,26 @@ class SpectrumModel:
         return regular_grid, cx+x0, on_interp, method_name
     
     def make_synthetic_LSFs(self, xmin, xmax, xstep = 50, plot = False):
+        '''
+        Create synthetic LSFs by applying the LSF model to the canvas.
+        This is useful to check if the LSF model is correct.
+
+        Parameters
+        ----------
+        xmin : int
+            Minimum x coordinate for placing synthetic LSFs
+        xmax : int
+            Maximum x coordinate for placing synthetic LSFs
+        xstep : int
+            Step size for placing synthetic LSFs
+        plot : bool
+            If True, plot the result
+
+        Returns
+        -------
+        canvas : np.ndarray
+            Canvas with synthetic LSFs applied
+        '''
 
         canvas = self.CANVAS.copy()
 
@@ -742,7 +761,29 @@ class SpectrumModel:
                 use_griddata = False,
                 use_interp1d = True,
                 ycoor_correction = 0,
-                shift_method = 'fft'):
+                ):
+        '''
+        Get the LSF for a given fiber index and x coordinate.
+        
+        Parameters
+        ----------
+        fibind : int
+            Fiber index
+        xcoor : float
+            X coordinate for the LSF
+        plot : bool
+            If True, plot the LSF
+        plotwidth : int
+            Width of the plot around the x coordinate
+        return_canvas : bool
+            If True, return the canvas with the LSF applied
+        use_griddata : bool
+            If True, use griddata to interpolate the LSF
+        use_interp1d : bool
+            If True, use interp1d to interpolate the LSF
+        ycoor_correction : float
+            Correction to the y coordinate of the LSF
+        '''
         
         ycoor = self.trace_funcs[fibind](xcoor) + ycoor_correction
 
@@ -753,19 +794,37 @@ class SpectrumModel:
             lsf = interp1d(self.lsf_xcoors[fibind], self.lsf_cutouts[fibind], axis=0)(xcoor)
 
         if plot:
-            applied_canvas = apply_patch(self.CANVAS, lsf, xcoor, ycoor, shift_method = shift_method)
+            applied_canvas = apply_patch(self.CANVAS, lsf, xcoor, ycoor)
             plt.imshow(applied_canvas)
             self.plot_traces()
             plt.xlim(xcoor - plotwidth, xcoor + plotwidth)
             plt.ylim(ycoor - plotwidth, ycoor + plotwidth)
 
         if return_canvas:
-            return apply_patch(self.CANVAS, lsf, xcoor, ycoor, shift_method = shift_method)
-        
+            return apply_patch(self.CANVAS, lsf, xcoor, ycoor)
+
         else:
             return lsf
     
     def construct_matrix(self, xmin, xmax, ycoor_correction_map):
+        '''
+        Construct the matrix for spectral extraction.
+        
+        Parameters
+        ----------
+        xmin : int
+            Minimum x coordinate for spectral extraction
+        xmax : int
+            Maximum x coordinate for spectral extraction
+        ycoor_correction_map : np.ndarray
+            Map of y coordinate corrections for each fiber and x coordinate.
+            This is used to correct for offsets in the y coordinates of the LSFs.
+        
+        Returns
+        -------
+        A : scipy.sparse.csr_matrix
+            Sparse matrix for spectral extraction.
+        '''
 
         from scipy.sparse import lil_matrix
         from .utils import filter_nans
@@ -823,6 +882,19 @@ class SpectrumModel:
             Threshold for damping
         trace_boxwidth : int
             Width of the box to trace the spectra
+        save_intermediate : bool
+            If True, save the intermediate results
+
+        Returns
+        -------
+        all_As : list
+            List of all constructed matrices for each iteration
+        all_ycoor_correction_maps : list
+            List of all y coordinate correction maps for each iteration
+        recons : list
+            List of reconstructed spectra for each iteration
+        imvec : np.ndarray
+            Flattened image vector for the given range [xmin, xmax]
         '''
 
         if ycoor_correction_map is None:
@@ -930,6 +1002,15 @@ class SpectrumModel:
             print(filename+'.npy saved')
 
     def save_spectra_model(self, filename):
+        '''
+        Save the spectra model to a file.
+
+        Parameters
+        ----------
+        filename : str
+            Filename to save the model
+        '''
+        
 
         # np.savez(filename+'.npz',
         #          matrix = self.A,

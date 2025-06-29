@@ -117,7 +117,7 @@ class PLMapFit:
 
     def run(self, centerfrac = None, move_ratio = 1, niter = 500, burn_in_iter=100, seed=12345, plot_every = 500,
             prior_type = 'circle', ini_method = 'random', plot = True,
-            small_to_random_ratio = 0, **kwargs):
+            small_to_random_ratio = 1, **kwargs):
 
 
 

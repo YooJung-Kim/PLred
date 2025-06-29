@@ -295,7 +295,7 @@ def extract_patch(image, xcoor, ycoor, xwidth, ywidth, plot = False):
     return patch
 
 
-def apply_patch(canvas, patch, xcoor, ycoor, shift_method = 'warpaffine', plot = False, verbose = False):
+def apply_patch(canvas, patch, xcoor, ycoor, plot = False, verbose = False):
 
     '''
     Apply patch to the canvas centered at (xcoor, ycoor).

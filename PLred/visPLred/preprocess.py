@@ -17,6 +17,26 @@ def make_dark_fits(dark_files):
     return hdu
 
 def fit_nonlinearity_curve(ts, vals, refind, npoly=3, plot=False, val_to_correct = None):
+    '''
+    Deprecated!!
+
+    Fit a nonlinearity curve to the data.
+
+    Parameters
+    ----------
+    ts : array-like
+        Array of integration times
+    vals : array-like
+        Array of counts observed at each integration time
+    refind : int
+        Index of the reference pixel (usually the one with the highest counts)
+    npoly : int
+        Degree of the polynomial to fit
+    plot : bool
+        Whether to plot the results
+    val_to_correct : float
+        Value to correct (optional)
+    '''
 
     # x-axis: expected counts (from the reference frame)
     xval = ts * vals[refind] / ts[refind]
@@ -110,7 +130,9 @@ def model_nonlinearity_from_flats(files, outname,
                                   npoly = 3,
                                   refind = -1,
                                   cut_min_maxcount = 100):
-    
+    '''
+    Deprecated!!
+    '''    
 
     ts, ims, sig_ims = read_flat_files(files)
 

@@ -3,7 +3,7 @@
 Data reduction and image reconstruction tools for photonic lantern (PL) spectra.
 Sorts PL frames based on PSF peak coordinates, makes response maps, and reconstructs image.
 
-> **Structure:** PLred includes a submodule **`visPLred`** that handles all the calibration and spectral extraction functionality for the SCExAO/FIRST-PL. After frame sorting, the outputs are used as inputs to **`visPLred`** which extracts spectra from the sorted frames. The extracted spectra are used as inputs to PLred again to make response maps and further image reconstruction. For any other instruments, their own spectral extraction tools can be used. PLred is intended to be independent of instruments.
+> PLred includes a submodule **`visPLred`** that handles all the calibration and spectral extraction functionality for the SCExAO/FIRST-PL. After frame sorting in **`PLred`**, the outputs are used as inputs to **`visPLred`** which extracts spectra from the sorted frames. The extracted spectra are used as inputs to **`PLred`** again to make response maps and further image reconstruction. For any other instruments, their own spectral extraction tools can be used. PLred is intended to be independent of instruments.
 
 ## Installation
 

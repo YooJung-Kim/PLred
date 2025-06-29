@@ -3,9 +3,6 @@ import numpy as np
 from astropy.io import fits
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-from datetime import datetime
-import glob
-import re
 
 from .parameters import telescope_params, firstcam_params
 from .spec import frame_to_spec
@@ -187,13 +184,40 @@ def normalize_flatten(cube):
     return np.array(flattened_cube), sumspec
 
 
-from sklearn.decomposition import PCA
-import time
+
 
 
 def normspec_PCA(datadir, obs_start, obs_end,
                  clip_sigma = 5, n_components = 50):
-    
+
+    '''
+    Perform PCA on the normalized spectra from the given data directory
+
+    Parameters
+    ----------
+    datadir : str
+        Path to the directory containing the data files.
+    obs_start : str
+        Start time of the observation in the format 'YYYY-MM-DD HH:MM:SS'.
+    obs_end : str
+        End time of the observation in the format 'YYYY-MM-DD HH:MM:SS'.
+    clip_sigma : float
+        Number of standard deviations to clip the spectra.
+    n_components : int
+        Number of PCA components to keep.
+        
+    Returns
+    -------
+    pca : PCA object
+        Fitted PCA object.
+    spec : np.ndarray
+        Summed spectrum across all frames.
+    '''
+
+    from sklearn.decomposition import PCA
+    import time
+    from PLred.sort import find_data_between
+
     specfiles = find_data_between(datadir, obs_start, obs_end,
                                   footer = '_spec.fits')
 
