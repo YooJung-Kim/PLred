@@ -29,35 +29,34 @@ Follow the tutorial series to get started:
 - **Key processes:** Dark subtraction, nonlinearity correction, wavelength calibration, spectrum extraction
 
 ### Step 3: Image Reconstruction ([Tutorial](PLred/tutorials/step3_image_reconstruction.ipynb))
-**Reconstructs intensity distributions from extracted spectra**
+**Reconstructs response maps from extracted spectra and performs image reconstruction**
 - **Input:** Extracted spectra (`_spec.h5` files), Frame sorting info (`_info.json`)
 - **Output:** Response maps and polynomial models (`.fits` files),
-- **Key processes:** Response map reconstruction, polynomial modeling, centroid analysis, convolution matrix generation
+- **Key processes:** Response map reconstruction, polynomial modeling, centroid analysis, convolution matrix generation, image reconstruction
 
 
 ## Core Modules
 
-### Main PLred module (`PLred/`)
+#### Main PLred module (`PLred/`)
 Frame sorting and image reconstruction
 
-### visPLred submodule (`PLred/visPLred/`)
+#### visPLred submodule (`PLred/visPLred/`)
 FIRST-PL data calibration and spectral extraction
 
 ## File Descriptions
 
-### Core PLred Module
 
-### `sort.py`
+#### `sort.py`
 Frame sorting and timestamp matching functions for organizing PL data by PSF coordinates.
 
-### `mapmodel.py`
+#### `mapmodel.py`
 Contains `CouplingMapModel` class for modeling empirical coupling maps and creating smooth polynomial interpolations.
 
-### `imgrecon.py`
+#### `imgrecon.py`
 General image reconstruction algorithms based on MCMC.
 
-### `fit.py`
+#### `fit.py`
 Functions for fitting data to models and performing image reconstruction.
 
-### `imageutils.py`
+#### `imageutils.py`
 Utility functions for image processing.
