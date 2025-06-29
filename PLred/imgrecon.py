@@ -304,7 +304,7 @@ class BaseImageReconstructor:
         plot the current state
         '''
         fig, axs = plt.subplots(ncols=3, figsize=(12,4))
-        axs[0].imshow(locs2image(self.locs, self.axis_len), origin='lower')
+        axs[0].imshow(locs2image(self.locs, self.axis_len), origin='upper')
         axs[1].semilogy(self.lls)
         axs[2].semilogy(self.temps)
 
@@ -323,7 +323,7 @@ class BaseImageReconstructor:
         plot the final state
         '''
         fig, axs = plt.subplots(ncols=3, figsize=(12,4))
-        axs[0].imshow(image, origin='lower')
+        axs[0].imshow(image, origin='upper')
         axs[1].semilogy(self.lls)
         axs[2].semilogy(self.temps)
 
