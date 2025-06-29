@@ -8,7 +8,7 @@ setup(
         "numpy",
         "scipy",
         "opencv-python",
-        "scikit-learn",
+        # "scikit-learn",
         "astropy"
     ],
 )
