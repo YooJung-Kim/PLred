@@ -314,8 +314,9 @@ class BaseImageReconstructor:
 
         for ax in axs[1:]:
             ax.set_xlabel('iteration')
+        plt.show()
 
-        fig.savefig(self.outname+'_current_state.png')
+        # fig.savefig(self.outname+'_current_state.png')
 
     def plot_final_state(self, image):
         '''
@@ -332,8 +333,8 @@ class BaseImageReconstructor:
 
         for ax in axs[1:]:
             ax.set_xlabel('iteration')
-
-        fig.savefig(self.outname+'_final_state.png')
+        plt.show()
+        # fig.savefig(self.outname+'_final_state.png')
 
     def move_element(self, ni, move_scheme = 'random'):
         '''

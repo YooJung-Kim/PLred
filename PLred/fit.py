@@ -116,7 +116,7 @@ class PLMapFit:
         self.regul_dict = regul_dict
 
     def run(self, centerfrac = None, move_ratio = 1, niter = 500, burn_in_iter=100, seed=12345, plot_every = 500,
-            prior_type = 'circle', ini_method = 'random', 
+            prior_type = 'circle', ini_method = 'random', plot = True,
             small_to_random_ratio = 0, **kwargs):
 
 
@@ -138,7 +138,8 @@ class PLMapFit:
         self.rc.make_prior(prior_type, **kwargs)
 
         self.rc.run_chain(niter, move_ratio = move_ratio, central_frac=centerfrac, plot_every = plot_every,
-                          small_to_random_ratio= small_to_random_ratio)
+                          small_to_random_ratio= small_to_random_ratio,
+                          plot = plot)
 
         print("Final chi2", self.rc.current_ll*2)
         return self.rc
