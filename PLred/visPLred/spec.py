@@ -388,6 +388,25 @@ class SpectrumModel:
 
     def trace_spectra(self, ini_wav_ind, trace_width = 4, poly_deg = 5, verbose = False,
                       save = False):
+        
+        '''
+        Trace the spectra across the image.
+        To check if the traces look good, use plot_traces() after this method.
+
+        Parameters
+        ----------
+        ini_wav_ind : int
+            Initial wavelength index to start tracing from
+        trace_width : int
+            Width of the trace in y direction (number of pixels)
+        poly_deg : int
+            Degree of the polynomial to fit the trace
+        verbose : bool
+            Print verbose messages during tracing
+        save : bool
+            Save the trace results to files
+
+        '''
 
         trace_out = np.zeros((self.NFIB, self.XMAX - self.XMIN))
 
@@ -1010,17 +1029,6 @@ class SpectrumModel:
         filename : str
             Filename to save the model
         '''
-        
-
-        # np.savez(filename+'.npz',
-        #          matrix = self.A,
-        #          wav_map = self.wav_map,
-        #          info = self.info
-        #          )
-        # print(filename+'.npz saved')
-
-        # I need to do this because lab testing code runs in a different environment
-        # which doesn't allow loading the file above
         
 
         try:
