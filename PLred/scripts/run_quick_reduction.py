@@ -9,6 +9,7 @@ from configobj import ConfigObj
 import sys, os, glob
 
 
+
 if __name__ == "__main__":
 
     configname = sys.argv[1]
@@ -17,7 +18,7 @@ if __name__ == "__main__":
 
     config = ConfigObj(configname)
 
-    path_input = config['Input']['input_dir']
+    path_input = ''
     input_map = config['Input']['input_map']
     input_wav = config['Input']['input_wav']
 
@@ -212,55 +213,6 @@ if __name__ == "__main__":
                                                                     np.std(np.array(bootstrap_opts[-1])[:,1])))
 
 
-
-    # n_point_source = int(config['Point_source_model']['n_point_source'])
-
-    # all_opts = []
-    # all_funs = []
-    # result_specinds = []
-    # bootstrap_opts = []
-    # bootstrap_funs = []
-
-    # for specind in wav_to_use:
-
-    #     fitter = fit.PLMapFit(matrix_file = output_dir + output_name + f'/matrix/matrix_{specind}.fits')
-
-    #     fibinds = np.arange(38)
-    #     fitter.prepare_data(fibinds)
-    #     fitter.subsample_matrix(fibinds)
-
-    #     ini_params =  np.array([0, 0])
-    #     bounds =[(-5, 5), (-5, 5)]
-        
-    #     fitter.run_fitting_pointsource(n_point_source, ini_params, bounds=bounds)
-
-    #     allopt = fitter.rc.opt
-    #     all_opts.append(allopt.x)
-    #     all_funs.append(allopt.fun)
-    #     result_specinds.append(specind)
-
-    #     print('start specind', specind, "using all: (%.3f, %.3f)" % (allopt.x[0], allopt.x[1]))
-
-
-    #     _opts = []
-    #     _funs = []
-    #     for samp in bootstrap_samples:
-            
-    #         fitter.prepare_data(samp)
-    #         fitter.subsample_matrix(samp)
-    #         fitter.run_fitting_pointsource(n_point_source, ini_params, bounds=bounds)
-
-    #         opt = fitter.rc.opt
-    #         _opts.append(opt.x)
-    #         _funs.append(opt.fun)
-        
-    #     bootstrap_opts.append(_opts)
-    #     bootstrap_funs.append(_funs)
-
-    #     print("specind %d result: bootstrap std (%.3f, %.3f)" % (specind,
-    #                                                                         np.std(np.array(bootstrap_opts[-1])[:,0]),
-    #                                                                         np.std(np.array(bootstrap_opts[-1])[:,1])))
-
             np.savez(output_dir + output_name + f'/point_model/point_model_bootstrap.npz',
                     bootstrap_opts = bootstrap_opts, 
                     result_specinds = result_specinds,
@@ -317,21 +269,8 @@ if __name__ == "__main__":
 
         wav_to_use = specinds[(wav['v'] < vmax2) & (wav['v'] > vmin2)] 
 
-        # point source fraction
-        point_source_frac_file = config['Gaussian_model']['point_source_frac'].strip()
-        print('filename',point_source_frac_file, type(point_source_frac_file))
-        if point_source_frac_file != '':
-            point_source_frac_file = np.load(point_source_frac_file)
-            fracs = []
-            for specind in wav_to_use:
-                w = np.where(specind == point_source_frac_file['specinds'])[0][0]
-                frac = point_source_frac_file['frac'][w]
-                if frac < 0.90:
-                    fracs.append(frac)
-                else:
-                    fracs.append(0)
-        else:
-            fracs = [0] * len(wav_to_use)
+        # point source fraction (default = 0)
+        fracs = [0] * len(wav_to_use)
         fracs = np.array(fracs)
 
         os.makedirs(output_dir + output_name + '/gauss_model/', exist_ok=True)
@@ -445,21 +384,8 @@ if __name__ == "__main__":
 
         wav_to_use = specinds[(wav['v'] < vmax2) & (wav['v'] > vmin2)] 
 
-        # point source fraction
-        point_source_frac_file = config['Image_reconstruction']['point_source_frac'].strip()
-        print('filename',point_source_frac_file, type(point_source_frac_file))
-        if point_source_frac_file != '':
-            point_source_frac_file = np.load(point_source_frac_file)
-            fracs = []
-            for specind in wav_to_use:
-                w = np.where(specind == point_source_frac_file['specinds'])[0][0]
-                frac = point_source_frac_file['frac'][w]
-                if frac < 0.90:
-                    fracs.append(frac)
-                else:
-                    fracs.append(None)
-        else:
-            fracs = [None] * len(wav_to_use)
+        # point source fraction (defulat = None)
+        fracs = [None] * len(wav_to_use)
         fracs = np.array(fracs)
 
         os.makedirs(output_dir + output_name + '/' + imgrecon_name, exist_ok=True)
@@ -506,7 +432,7 @@ if __name__ == "__main__":
             rc = fitter.run(small_to_random_ratio = 1,
                             centerfrac = frac,
                             niter = n_iter,
-                            radius = 40,
+                            prior_type = 'uniform',
                             burn_in_iter = burn_in_iter)
             
             all_ims.append(locs2image(rc.post_locs, rc.axis_len))
@@ -514,16 +440,18 @@ if __name__ == "__main__":
             all_fracs.append(frac)
 
             # save the results
-            fig, axs = plt.subplots(figsize= (10,5), ncols=2)
+            fig = plt.figure(figsize=(5,5))
+            ax = fig.add_subplot(111)
             im = locs2image(rc.post_locs, rc.axis_len).copy()
-            axs[0].imshow(im)
+            ax.imshow(im, extent = (-fitter.mapmodel.image_fov/2, fitter.mapmodel.image_fov/2,
+                                   -fitter.mapmodel.image_fov/2, fitter.mapmodel.image_fov/2),
+                                   origin='upper')
+            ax.set_xlabel('X (mas)')
+            ax.set_ylabel('Y (mas)')
+            ax.axvline(0, color='white',alpha=0.3)
+            ax.axhline(0, color='white',alpha=0.3)
             
-            im[fitter.mapmodel.image_ngrid//2, fitter.mapmodel.image_ngrid//2] = None
-            axs[1].imshow(im)
-            
-            
-            fig.suptitle(f'specind = %d, ll = %.4f, frac = {frac}' % (specind, rc.current_ll))
-                
+            fig.suptitle(f'specind = %d, ll = %.4f' % (specind, rc.current_ll))
             fig.savefig(output_dir + output_name + '/' + imgrecon_name + '/plots/specind_%d.png' % (specind))
 
 
@@ -549,139 +477,3 @@ if __name__ == "__main__":
                      hyperparam_dict = hyperparam_dict)
             
             
-
-    ##########################
-    # Elliptical Gaussian model fit
-    ##########################
-
-    exists = os.path.exists(output_dir + output_name + '/elliptical_gauss_model/elliptical_gauss_model_bootstrap.npz')
-    skip = config['Elliptical_Gaussian_model'].as_bool('skip_if_exists')
-
-    fix_PA_value = float(config['Elliptical_Gaussian_model']['fix_PA_value'])
-
-    if exists and skip:
-        print('Elliptical Gaussian model exists. skipping...')
-    else:
-    
-        from scipy.optimize import minimize
-
-        wav = np.load(path_input + input_wav)
-        specinds = wav['specinds']
-        vmax2 = float(config['Elliptical_Gaussian_model']['vrange_max'])
-        vmin2 = float(config['Elliptical_Gaussian_model']['vrange_min'])
-
-        wav_to_use = specinds[(wav['v'] < vmax2) & (wav['v'] > vmin2)] 
-
-        # point source fraction
-        point_source_frac_file = config['Elliptical_Gaussian_model']['point_source_frac'].strip()
-        print('filename',point_source_frac_file, type(point_source_frac_file))
-        if point_source_frac_file != '':
-            point_source_frac_file = np.load(point_source_frac_file)
-            fracs = []
-            for specind in wav_to_use:
-                w = np.where(specind == point_source_frac_file['specinds'])[0][0]
-                frac = point_source_frac_file['frac'][w]
-                if frac < 0.90:
-                    fracs.append(frac)
-                else:
-                    fracs.append(0)
-        else:
-            fracs = [0] * len(wav_to_use)
-        fracs = np.array(fracs)
-
-        os.makedirs(output_dir + output_name + '/elliptical_gauss_model/', exist_ok=True)
-
-        nbootstrap = int(config['Elliptical_Gaussian_model']['nbootstrap'])
-        bootstrap_samples = [np.random.choice(np.arange(38), size=38, replace=True) for _ in range(nbootstrap)]
-
-        all_opts = []
-        all_funs = []
-        result_specinds = []
-        bootstrap_opts = []
-        bootstrap_funs = []
-        central_fracs = []
-
-        for specind in wav_to_use:
-
-            fitter = fit.PLMapFit(matrix_file = output_dir + output_name + f'/matrix/matrix_{specind}.fits')
-
-            fibinds = np.arange(38)
-            fitter.prepare_data(fibinds)
-            fitter.subsample_matrix(fibinds)
-
-            ini_params =  np.array([fitter.mapmodel.image_ngrid//2, fitter.mapmodel.image_ngrid//2, 
-                                    2, 2])
-            bounds = [(1, fitter.mapmodel.image_ngrid-1),
-                        (1, fitter.mapmodel.image_ngrid-1),
-                        (1.1e-2, fitter.mapmodel.image_ngrid),
-                        (1.1e-2, fitter.mapmodel.image_ngrid)]
-            
-            fitter.run_fitting_gaussian(ini_params, bounds=bounds,
-                                        fix_PA_value=fix_PA_value,
-                                        central_point_source_flux=fracs[np.where(wav_to_use == specind)[0][0]])
-
-            allopt = fitter.rc.opt
-            all_opts.append(allopt.x)
-            all_funs.append(allopt.fun)
-            result_specinds.append(specind)
-            central_fracs.append(fitter.rc.central_point_source_flux)
-
-            print('start specind', specind, "using all: (%.3f, %.3f, width %.3f, %.3f)" % (allopt.x[0], allopt.x[1], allopt.x[2], allopt.x[3]))
-
-
-            _opts = []
-            _funs = []
-            for samp in bootstrap_samples:
-                
-                fitter.prepare_data(samp)
-                fitter.subsample_matrix(samp)
-                fitter.run_fitting_gaussian(ini_params, bounds=bounds,
-                                            fix_PA_value=fix_PA_value,
-                                            central_point_source_flux=fracs[np.where(wav_to_use == specind)[0][0]])
-
-                opt = fitter.rc.opt
-                _opts.append(opt.x)
-                _funs.append(opt.fun)
-            
-            bootstrap_opts.append(_opts)
-            bootstrap_funs.append(_funs)
-
-            print("specind %d result: bootstrap std (%.3f, %.3f, width %.3f, %.3f)" % (specind,
-                                                                                np.std(np.array(bootstrap_opts[-1])[:,0]),
-                                                                                np.std(np.array(bootstrap_opts[-1])[:,1]),
-                                                                                np.std(np.array(bootstrap_opts[-1])[:,2]),
-                                                                                np.std(np.array(bootstrap_opts[-1])[:,3])))
-
-            np.savez(output_dir + output_name + f'/elliptical_gauss_model/elliptical_gauss_model_bootstrap.npz',
-                    bootstrap_opts = bootstrap_opts, 
-                    result_specinds = result_specinds,
-                    all_opts = all_opts,
-                    all_funs = all_funs,
-                    boostrap_samples = bootstrap_samples,
-                    bootstrap_funs = bootstrap_funs,
-                    central_fracs = central_fracs
-                    )
-            
-        # plot
-        fig, axs = plt.subplots(figsize= (16,4), ncols=5)
-        bootstrap_std = np.nanstd(bootstrap_opts, axis=1)
-        offsets = [fitter.mapmodel.image_ngrid//2, fitter.mapmodel.image_ngrid//2, 0, 0]
-        scale = fitter.mapmodel.image_fov / fitter.mapmodel.image_ngrid
-        for i in range(4):
-            axs[i].errorbar(result_specinds,
-                            (np.array(all_opts)[:,i] - offsets[i]) * (scale),
-                            yerr = bootstrap_std[:,i] * scale,
-                            fmt = 'o-', ms=2,
-                            color='C%d' % i)
-
-        axs[3].plot(result_specinds, central_fracs, 'o-')
-        axs[0].set_title('x (mas)')
-        axs[1].set_title('y (mas)')
-        axs[2].set_title('width x (mas)')
-        axs[3].set_title('width y (mas)')
-        axs[4].set_title('central point source fraction')
-        fig.savefig(output_dir + output_name + '/elliptical_gauss_model/elliptical_gauss_model_results.png')
-
-
-
-
