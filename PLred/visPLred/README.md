@@ -6,7 +6,7 @@ Module for FIRST-PL frame calibration and spectral extraction.
 
 visPLred handles the critical **Step 2: Spectral Extraction** of the PLred pipeline, extracting spectra from sorted PL frames. This module performs the following tasks:
 
-### Preprocessing & Calibration
+### Calibration & Spectral model generation
 1. **Nonlinearity Correction Model Generation ([Tutorial](tutorials/pre1_nonlinearity_correction.ipynb))**
    - **Input:** Calibration data, flat fields of multiple integration times
    - **Output:** Detector nonlinearity correction models
