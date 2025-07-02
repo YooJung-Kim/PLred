@@ -515,7 +515,7 @@ class CouplingMapImageReconstructor(BaseImageReconstructor):
 
         return current_ll
 
-import emcee
+
 
 class BaseModelFitter:
 
@@ -616,7 +616,8 @@ class BaseModelFitter:
         
     
     def run_chain(self, niter, ini_params, ini_ball_size = 1e-3, plot_every=100):
-
+        import emcee
+        
         self.plot_every = plot_every
 
         self.nparams = len(ini_params)
