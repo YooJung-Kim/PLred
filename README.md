@@ -11,7 +11,7 @@ See [Kim et al. 2025](https://iopscience.iop.org/article/10.3847/2041-8213/ae073
 To install, run:
 
 ```bash
-pip install -e .
+pip install git+https://github.com/YooJung-Kim/PLred.git
 ```
 
 ## Quick Start
