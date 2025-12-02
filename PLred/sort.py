@@ -119,7 +119,10 @@ def script_match_timestamps(configname):
         fastcam_dark_end_time = config['Fastcam']['dark_end_time']
 
     slowcam_timestamps = config['Slowcam']['timestamp_dir']
-    slowcam_nbin = int(config['Slowcam']['nbin'])
+    try:
+        slowcam_nbin = int(config['Slowcam']['nbin'])
+    except:
+        slowcam_nbin = 1
 
     outname = config['Output']['outname']
     filename = config['Output']['filename']
