@@ -157,7 +157,13 @@ def script_match_timestamps(configname):
     ######################
     
     fastcam_timestamp = np.concatenate([np.genfromtxt(f)[:,4] for f in fastcam_timestampfiles])
-    slowcam_timestamp = np.concatenate([np.genfromtxt(f)[:,4] for f in slowcam_timestampfiles])
+    
+    # if slowcam_nbin > 1:
+    #     _ts = [np.genfromtxt(f)[:,4] for f in slowcam_timestampfiles]
+
+    #     slowcam_timestamp = np.concatenate([np.genfromtxt(f)[:,4] for f in slowcam_timestampfiles])
+    # else:
+    #     slowcam_timestamp = np.concatenate([np.genfromtxt(f)[:,4] for f in slowcam_timestampfiles])
 
     # file and frame indices into array
     fastcam_fileinds = np.concatenate([np.full(len(np.genfromtxt(f)), i) for i, f in enumerate(fastcam_timestampfiles)])
@@ -167,10 +173,12 @@ def script_match_timestamps(configname):
     slowcam_frameinds = np.concatenate([np.genfromtxt(f, dtype=int)[:,0] for f in slowcam_timestampfiles])
 
     # optional slowcam nbin
+
+    ## TODO!!: need to deal with situations where logging went off in the middle of the observation. 
     if slowcam_nbin > 1:
-        slowcam_timestamp = slowcam_timestamp.reshape((-1, slowcam_nbin))[:,0]
-        slowcam_fileinds = slowcam_fileinds.reshape((-1, slowcam_nbin))[:,0]
-        slowcam_frameinds = slowcam_frameinds.reshape((-1, slowcam_nbin))[:,0]
+        slowcam_timestamp = slowcam_timestamp[:(len(slowcam_timestamp)//slowcam_nbin)*slowcam_nbin].reshape((-1, slowcam_nbin))[:,0]
+        slowcam_fileinds = slowcam_fileinds[:(len(slowcam_fileinds)//slowcam_nbin)*slowcam_nbin].reshape((-1, slowcam_nbin))[:,0]
+        slowcam_frameinds = slowcam_frameinds[:(len(slowcam_frameinds)//slowcam_nbin)*slowcam_nbin].reshape((-1, slowcam_nbin))[:,0]
 
     # match indices (reference here : slowcam)
     bisect_inds = [bisect(fastcam_timestamp,  slowcam_timestamp[ind]) for ind in range(len(slowcam_timestamp))]
