@@ -90,6 +90,7 @@ def script_match_timestamps(configname):
 
         [Slowcam]
         timestamp_dir       = /mnt/userdata/yjkim/20250211_betcmi/firstcam_timestamps/
+        nbin                = 1
 
         [Output]
         outname             = /mnt/userdata/yjkim/timestamp_matched_palila/betcmi_20250211
@@ -118,6 +119,7 @@ def script_match_timestamps(configname):
         fastcam_dark_end_time = config['Fastcam']['dark_end_time']
 
     slowcam_timestamps = config['Slowcam']['timestamp_dir']
+    slowcam_nbin = int(config['Slowcam']['nbin'])
 
     outname = config['Output']['outname']
     filename = config['Output']['filename']
@@ -161,11 +163,17 @@ def script_match_timestamps(configname):
     fastcam_frameinds = np.concatenate([np.genfromtxt(f, dtype=int)[:,0] for f in fastcam_timestampfiles])
     slowcam_frameinds = np.concatenate([np.genfromtxt(f, dtype=int)[:,0] for f in slowcam_timestampfiles])
 
+    # optional slowcam nbin
+    if slowcam_nbin > 1:
+        slowcam_timestamp = slowcam_timestamp.reshape((-1, slowcam_nbin))[:,0]
+        slowcam_fileinds = slowcam_fileinds.reshape((-1, slowcam_nbin))[:,0]
+        slowcam_frameinds = slowcam_frameinds.reshape((-1, slowcam_nbin))[:,0]
+
     # match indices (reference here : slowcam)
     bisect_inds = [bisect(fastcam_timestamp,  slowcam_timestamp[ind]) for ind in range(len(slowcam_timestamp))]
 
     # define start and end indices
-    ind_start = 0 #73079 #np.argmax(np.array(bisect_inds) > 30000)
+    ind_start = 0 
     ind_end = np.argmin(np.array(bisect_inds) < np.max(bisect_inds))
 
     if show_plot:
@@ -414,7 +422,8 @@ def bin_by_centroids_to_file(outname, psfcamframes, plcam_file_indices, plcam_fr
                                   centroids, xbins, ybins,
                                 #   maxframes = 1000,
                                 #   bootstrap = False,
-                                  skip_frame_reading = False):
+                                  skip_frame_reading = False,
+                                  nbin = 1):
     '''
     Bin frames by centroids, but not from already stored frames.
     Reads the frames from the plcam_file_indices and plcam_frame_indices.
@@ -512,14 +521,24 @@ def bin_by_centroids_to_file(outname, psfcamframes, plcam_file_indices, plcam_fr
                     with h5py.File(outname+'_bin_%d_%d.h5' % (iy,ix), 'r+') as h5f:
                         dset = h5f['rawframes']
                         wi = write_idx[(iy, ix)]
-                        dset[wi] = _dat[i]
+
+                        if nbin == 1:
+                            dset[wi] = _dat[i]
+                        else:
+                            dset[wi] = np.mean(_dat[i:i+nbin], axis=0)
                         write_idx[(iy, ix)] += 1
 
                     # plcam_binned_frames[iy,ix,:,:] += _dat[i] * nstack
-                    print(f"Added frame {i} from file {fileind} to bin {iy},{ix}")
+                    if nbin == 1:
+                        print(f"Added frame {i} from file {fileind} to bin {iy},{ix}")
+                    else:
+                        print(f"Added frames {i} to {i+nbin-1} from file {fileind} to bin {iy},{ix}")
                 except:
                     # print(e)
-                    print(f"Failed to add frame {i} from file {fileind} to bin {iy},{ix}")
+                    if nbin == 1:
+                        print(f"Failed to add frame {i} from file {fileind} to bin {iy},{ix}")
+                    else:
+                        print(f"Failed to add frames {i} to {i+nbin-1} from file {fileind} to bin {iy},{ix}")
                     continue
 
         return psfcam_binned_frames, num_frames, idxs
@@ -684,6 +703,7 @@ class FrameSorter:
 
         '''
         Match the frames from the two cameras
+        Warning: location_only = False option is not maintained!
         '''
 
         plcam_timestampfiles = find_data_between(self.plcam_timestamp_path, self.obs_start, self.obs_end, header=header, footer='.txt')
@@ -762,7 +782,8 @@ class FrameSorter:
                         #  return_bootstrap_samples = False,
                          skip_frame_reading = False,
                          to_file = False,
-                         filename = None):
+                         filename = None,
+                         nbin = 1):
 
         '''
         Bin the frames by centroids
@@ -784,6 +805,8 @@ class FrameSorter:
             it generates big files, so use this only if map_n, map_width, and effective_idx are optimized.
         filename: str
             name of the file to save the binned frames to.
+        nbin: int
+            binning factor for PL camera frames that was used for timestamp matching.
         '''
 
         if effective_idx is not None:
@@ -831,10 +854,11 @@ class FrameSorter:
         
         
         else:
-            infodict = {'xmin': self.xmin, 'ymin': self.ymin, 'xmax': self.xmax, 'ymax': self.ymax, 'map_n': map_n, 'map_w': map_width, 'pix2mas': self.pix2mas}
+            infodict = {'xmin': self.xmin, 'ymin': self.ymin, 'xmax': self.xmax, 'ymax': self.ymax, 'map_n': map_n, 'map_w': map_width, 'pix2mas': self.pix2mas, 'nbin': nbin}
             json.dump(infodict, open(filename+'_info.json', 'w'))
             print("Info Saved to %s" % filename+'_info.json')
-            self.psfcam_binned_frames, self.num_frames, self.idxs = bin_by_centroids_to_file(filename, psfcam_frames, plcam_file_indices, plcam_frame_indices, self.plcam_files, self.ny, self.nx, centroids, xbins, ybins, skip_frame_reading=skip_frame_reading)
+            self.psfcam_binned_frames, self.num_frames, self.idxs = bin_by_centroids_to_file(filename, psfcam_frames, plcam_file_indices, plcam_frame_indices, self.plcam_files, self.ny, self.nx, centroids, xbins, ybins, skip_frame_reading=skip_frame_reading,
+                                                                                             nbin = nbin)
             # return      
             
         # # this is used for bootstrap later
