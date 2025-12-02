@@ -163,7 +163,7 @@ def script_match_timestamps(configname):
 
     #     slowcam_timestamp = np.concatenate([np.genfromtxt(f)[:,4] for f in slowcam_timestampfiles])
     # else:
-    #     slowcam_timestamp = np.concatenate([np.genfromtxt(f)[:,4] for f in slowcam_timestampfiles])
+    slowcam_timestamp = np.concatenate([np.genfromtxt(f)[:,4] for f in slowcam_timestampfiles])
 
     # file and frame indices into array
     fastcam_fileinds = np.concatenate([np.full(len(np.genfromtxt(f)), i) for i, f in enumerate(fastcam_timestampfiles)])
