@@ -24,6 +24,7 @@ Usage:
 """
 
 import os
+import glob
 import numpy as np
 import h5py
 import logging
@@ -268,7 +269,7 @@ def ingest_timeseries_to_hdf5(config_file, match_h5_path=None, show_progress=Tru
 
     Config sections used:
         [Ingest]: dataset_name, output_dir, wavelength_min_um, wavelength_max_um
-        [Detector]: plate_scale_mas
+        [Detector]: plate_scale_mas, nfib
         [Metadata]: file_type, target_name
     """
     config = ConfigObj(config_file)
@@ -279,6 +280,7 @@ def ingest_timeseries_to_hdf5(config_file, match_h5_path=None, show_progress=Tru
     wavelength_max = float(config["Ingest"].get("wavelength_max_um", 1.8))
 
     plate_scale_mas = float(config["Detector"].get("plate_scale_mas", parameters.IR_PLATE_SCALE))
+    nfib = int(config["Detector"].get("nfib", parameters.NFIB))
     file_type = config["Metadata"].get("file_type", "onsky-sci")
     target_name = config["Metadata"].get("target_name", "unknown")
 
@@ -296,16 +298,78 @@ def ingest_timeseries_to_hdf5(config_file, match_h5_path=None, show_progress=Tru
     with h5py.File(match_h5_path, "r") as f:
         psfcam_frames = f["psfcam_frames"][:]
         psfcam_timestamps = f["psfcam_timestamps"][:]
+        plcam_fileinds = f["plcam_fileinds"][:]
+        plcam_frameinds = f["plcam_frameinds"][:]
         n_matched = f.attrs["n_matched"]
 
-    # TODO: Load extracted spectra from _spec.fits files and concatenate
-    # For now, placeholder (will be implemented after spec extraction step)
-
     print(f"✓ Loaded {n_matched} matched frames")
-    print("(Spectral extraction integration coming in next step)")
 
+    # Find all _spec.fits files
+    spec_fits_files = sorted(glob.glob(os.path.join(output_dir, "*_spec.fits")))
+    if len(spec_fits_files) == 0:
+        raise FileNotFoundError(
+            f"No extracted spectra files (_spec.fits) found in {output_dir}. "
+            "Run Step 2 (spectral extraction) first."
+        )
+
+    print(f"✓ Found {len(spec_fits_files)} extracted spectra files")
+
+    # Load extracted spectra in matched order
+    extracted_spectra = []
+    iterator = tqdm(range(n_matched), desc="Loading spectra") if show_progress else range(n_matched)
+
+    for i in iterator:
+        file_idx = plcam_fileinds[i]
+        frame_idx = plcam_frameinds[i]
+
+        # Load spectrum from appropriate _spec.fits file
+        spec_fits_file = spec_fits_files[file_idx]
+        with fits.open(spec_fits_file) as hdul:
+            spectrum = hdul[0].data[frame_idx]  # (N_fibers, N_lambda)
+        extracted_spectra.append(spectrum)
+
+    extracted_spectra = np.array(extracted_spectra)  # (N_matched, N_fibers, N_lambda)
+    print(f"✓ Loaded spectra shape: {extracted_spectra.shape}")
+
+    # Create wavelength grid (linear interpolation across detector)
+    detector_width = extracted_spectra.shape[2]
+    wavelengths = np.linspace(wavelength_min, wavelength_max, detector_width)
+
+    # Create output HDF5 file
     output_h5 = os.path.join(output_dir, f"{dataset_name}.h5")
-    print(f"Output will be saved to: {output_h5}")
+    print(f"Creating {output_h5}...")
+
+    with h5py.File(output_h5, "w") as f:
+        # Main datasets
+        f.create_dataset(
+            "intensities",
+            data=extracted_spectra.astype(np.float32),
+            compression="gzip",
+            compression_opts=4,
+        )
+        f.create_dataset("timestamps", data=psfcam_timestamps, compression="gzip", compression_opts=4)
+        f.create_dataset("wavelengths", data=wavelengths, compression="gzip", compression_opts=4)
+
+        # PSF camera group
+        psf_group = f.create_group("tracking_camera")
+        psf_group.create_dataset(
+            "images", data=psfcam_frames, compression="gzip", compression_opts=4
+        )
+        psf_group.create_dataset("timestamps", data=psfcam_timestamps)
+        psf_group.attrs["camera_name"] = "PALILA"
+        psf_group.attrs["plate_scale_mas"] = plate_scale_mas
+
+        # Top-level attributes
+        f.attrs["dataset_name"] = dataset_name
+        f.attrs["target_name"] = target_name
+        f.attrs["file_type"] = file_type
+        f.attrs["n_frames"] = n_matched
+        f.attrs["n_fibers"] = nfib
+        f.attrs["wavelength_min_um"] = wavelength_min
+        f.attrs["wavelength_max_um"] = wavelength_max
+        f.attrs["created_utc"] = datetime.now(timezone.utc).isoformat()
+
+    print(f"✓ Created {output_h5}")
 
     return output_h5
 
