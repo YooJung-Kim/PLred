@@ -430,6 +430,9 @@ def script_match_timestamps(configname):
         # Create nstacks dataset
         fh.create_dataset('nstacks', data=np.array(nstacks, dtype='float32'))
 
+        # Create timestamps dataset
+        fh.create_dataset('timestamps', data=np.array(timestamps, dtype='float64'))
+
         # Create metadata
         meta = {
             'fastcam_timestampfiles': list(fastcam_timestampfiles),
