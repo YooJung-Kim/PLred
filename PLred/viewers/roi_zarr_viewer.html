@@ -274,11 +274,11 @@ canvas {
 <body>
 <header>
   <div class="brand">PLred ROI Zarr Viewer</div>
-  <input id="zarr-url" type="text" style="min-width:420px;" placeholder="http://localhost:8000/roi_access.zarr">
-  <button id="load-btn">Load Zarr</button>
+  <input id="zarr-url" type="text" style="min-width:420px;" placeholder="http://localhost:8000/timestamp_matching_output/roi_access.zarr.zip">
+  <button id="load-btn">Load .zarr.zip URL</button>
   <button id="zip-btn" class="secondary">Upload .zarr.zip</button>
   <input id="zip-input" type="file" accept=".zip" style="display:none;">
-  <div id="status">Ready. Load by URL or upload a .zarr.zip file directly.</div>
+  <div id="status">Ready. Load a .zarr.zip by URL or upload one directly.</div>
 </header>
 
 <main>
@@ -734,8 +734,8 @@ class ZipSource {
     this.rootPrefix = rootPrefix;
   }
 
-  static async fromFile(file) {
-    const zip = await JSZip.loadAsync(file);
+  static async fromZipData(zipData) {
+    const zip = await JSZip.loadAsync(zipData);
     const entries = new Map();
     Object.keys(zip.files).forEach((k) => {
       if (!zip.files[k].dir) entries.set(normPath(k), zip.files[k]);
@@ -754,6 +754,18 @@ class ZipSource {
       rootPrefix = candidates[0];
     }
     return new ZipSource(entries, rootPrefix);
+  }
+
+  static async fromFile(file) {
+    return ZipSource.fromZipData(file);
+  }
+
+  static async fromUrl(url) {
+    const bytes = await fetchBytes(url);
+    if (!bytes) {
+      throw new Error('Could not fetch zip file from URL');
+    }
+    return ZipSource.fromZipData(bytes);
   }
 
   resolve(path) {
@@ -844,7 +856,10 @@ async function loadStoreFromSource(source, sourceLabel) {
 async function loadStoreFromUrl() {
   const raw = document.getElementById('zarr-url').value.trim();
   if (!raw) throw new Error('Please enter a Zarr URL');
-  const source = new UrlSource(raw);
+  if (!/\.zip(?:$|[?#])/i.test(raw)) {
+    throw new Error('URL must point to a .zarr.zip file');
+  }
+  const source = await ZipSource.fromUrl(raw);
   await loadStoreFromSource(source, raw);
 }
 
