@@ -107,7 +107,7 @@ def write_intermediate_matched_h5(
         psf_grp.create_dataset('timestamps', data=fastcam_timestamps, dtype='float64')
         psf_grp.create_dataset('file_indices', data=fastcam_fileinds, dtype='int64')
         psf_grp.create_dataset('frame_indices', data=fastcam_frameinds, dtype='int64')
-        psf_grp.create_dataset('timestamp_files', data=json.dumps(fastcam_timestampfiles))
+        psf_grp.create_dataset('timestamp_files', data=json.dumps(list(fastcam_timestampfiles)))
         psf_grp.attrs['num_frames'] = len(fastcam_timestamps)
 
         # --- PL camera matching data ---
@@ -115,7 +115,7 @@ def write_intermediate_matched_h5(
         pl_grp.create_dataset('timestamps', data=slowcam_timestamps, dtype='float64')
         pl_grp.create_dataset('file_indices', data=slowcam_fileinds, dtype='int64')
         pl_grp.create_dataset('frame_indices', data=slowcam_frameinds, dtype='int64')
-        pl_grp.create_dataset('timestamp_files', data=json.dumps(slowcam_timestampfiles))
+        pl_grp.create_dataset('timestamp_files', data=json.dumps(list(slowcam_timestampfiles)))
         pl_grp.attrs['num_frames'] = len(slowcam_timestamps)
 
         # --- Matching results ---
