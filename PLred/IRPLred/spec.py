@@ -5,6 +5,51 @@ import os, glob
 from tqdm import tqdm
 
 
+def detect_detector_dimensions(fits_file_or_dir):
+    """
+    Auto-detect detector height and width from FITS file.
+
+    Parameters
+    ----------
+    fits_file_or_dir : str
+        Path to a single FITS file, or directory containing FITS files
+
+    Returns
+    -------
+    height : int
+        Detector height in pixels
+    width : int
+        Detector width in pixels
+
+    Notes
+    -----
+    Reads the first frame of the first FITS file found.
+    Assumes data is in primary HDU with shape (N_frames, height, width).
+    """
+    if os.path.isfile(fits_file_or_dir):
+        fits_file = fits_file_or_dir
+    else:
+        # Directory: find first FITS file
+        fits_files = sorted(glob.glob(os.path.join(fits_file_or_dir, "*.fits"))) + \
+                     sorted(glob.glob(os.path.join(fits_file_or_dir, "*.fits.gz")))
+        if not fits_files:
+            raise FileNotFoundError(f"No FITS files found in {fits_file_or_dir}")
+        fits_file = fits_files[0]
+
+    with fits.open(fits_file) as hdul:
+        data = hdul[0].data
+        if data.ndim == 3:
+            # (N_frames, height, width)
+            height, width = data.shape[1], data.shape[2]
+        elif data.ndim == 2:
+            # Single frame: (height, width)
+            height, width = data.shape
+        else:
+            raise ValueError(f"Unexpected FITS data shape: {data.shape}")
+
+    return height, width
+
+
 def extract_spec(im, ylocs, width=6):
     """
     Extract spectra from a 2D image at multiple Y locations.

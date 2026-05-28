@@ -176,3 +176,57 @@ def bin_by_centroids_from_indices(psfcamframes, centroids, xbins, ybins):
             num_frames[i, j] = np.sum(idx)
 
     return psfcam_binned_frames, num_frames, idxs
+
+
+def compute_weighted_frame_binning(fast_timestamps, slow_timestamps):
+    """
+    Compute weighted binning dictionary for aligning fast camera to slow camera.
+
+    When frame rates differ, the faster camera must be dark-subtracted every frame,
+    then weighted-binned to match the slower camera's reference timestamps.
+
+    Parameters
+    ----------
+    fast_timestamps : ndarray
+        Timestamps from faster camera (unix epoch)
+    slow_timestamps : ndarray
+        Timestamps from slower camera (unix epoch, reference)
+
+    Returns
+    -------
+    binning_dict : dict
+        Dictionary mapping each slow camera frame index to a dict:
+        {slow_frame_idx: {fast_frame_idx: weight, ...}, ...}
+        where weights sum to ~1 for each slow frame
+    """
+    # Find which fast frame each slow timestamp falls between
+    bisect_inds = [bisect(fast_timestamps, slow_ts) for slow_ts in slow_timestamps]
+
+    binning_dict = {}
+
+    for slow_idx in range(len(slow_timestamps) - 1):
+        left_fast_idx = bisect_inds[slow_idx] - 1
+        right_fast_idx = bisect_inds[slow_idx + 1] - 1
+
+        binning_dict[slow_idx] = {}
+
+        # Fractional weight for left boundary frame
+        if left_fast_idx >= 0 and left_fast_idx < len(fast_timestamps):
+            leftfrac = (fast_timestamps[bisect_inds[slow_idx]] - slow_timestamps[slow_idx]) / (
+                fast_timestamps[bisect_inds[slow_idx]] - fast_timestamps[bisect_inds[slow_idx] - 1]
+            )
+            binning_dict[slow_idx][bisect_inds[slow_idx] - 1] = leftfrac
+
+        # Full-weight frames in the middle
+        for fast_idx in range(bisect_inds[slow_idx], bisect_inds[slow_idx + 1] - 1):
+            if 0 <= fast_idx < len(fast_timestamps):
+                binning_dict[slow_idx][fast_idx] = 1.0
+
+        # Fractional weight for right boundary frame
+        if right_fast_idx >= 0 and right_fast_idx < len(fast_timestamps):
+            rightfrac = (slow_timestamps[slow_idx + 1] - fast_timestamps[bisect_inds[slow_idx + 1] - 1]) / (
+                fast_timestamps[bisect_inds[slow_idx + 1]] - fast_timestamps[bisect_inds[slow_idx + 1] - 1]
+            )
+            binning_dict[slow_idx][bisect_inds[slow_idx + 1] - 1] = rightfrac
+
+    return binning_dict
