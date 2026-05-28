@@ -124,6 +124,20 @@ def _normalize_zarr_output_target(zarr_path):
     return base, zip_path
 
 
+def _normalize_crop_bounds(crop, shape, label):
+    """Validate and normalize a (y0, y1, x0, x1) crop against a 2D shape."""
+    if crop is None:
+        return (0, shape[0], 0, shape[1])
+    if len(crop) != 4:
+        raise ValueError("%s must be a 4-tuple (y0, y1, x0, x1)" % label)
+    y0, y1, x0, x1 = map(int, crop)
+    if y0 < 0 or y1 > shape[0] or x0 < 0 or x1 > shape[1] or y1 <= y0 or x1 <= x0:
+        raise ValueError(
+            "%s (%d,%d,%d,%d) out of bounds for shape (%d,%d)" % (
+                label, y0, y1, x0, x1, shape[0], shape[1]))
+    return y0, y1, x0, x1
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -202,6 +216,7 @@ def build_ROI_access(
     zarr_zip=True,
     zarr_include_metadata=True,
     zarr_include_psf=False,
+    zarr_psf_roi=None,
     zarr_psf_chunk_t=256,
     verbose=True,
 ):
@@ -253,6 +268,10 @@ def build_ROI_access(
     zarr_include_psf : bool
         If True and zarr_path is provided, also store /psf_frames
         with shape (N, h, w). This can significantly increase Zarr size.
+    zarr_psf_roi : tuple of int, optional
+        Optional crop applied only to the exported Zarr /psf_frames dataset.
+        The format is (y0, y1, x0, x1) in PSF-frame pixel coordinates. If not
+        given, the full PSF frame is exported.
     zarr_psf_chunk_t : int
         Time-axis chunk size for /psf_frames in Zarr when
         zarr_include_psf=True.
@@ -379,24 +398,31 @@ def build_ROI_access(
             if zarr_include_psf:
                 psf_src = f['psfcam/frames']
                 _, psf_h, psf_w = psf_src.shape
+                psf_y0, psf_y1, psf_x0, psf_x1 = _normalize_crop_bounds(
+                    zarr_psf_roi, (psf_h, psf_w), 'zarr_psf_roi')
+                psf_crop_h = psf_y1 - psf_y0
+                psf_crop_w = psf_x1 - psf_x0
                 ct_psf = max(1, min(int(zarr_psf_chunk_t), N))
                 for z_root in filter(None, [z_root_dir, z_root_zip]):
                     z_psf = z_root.create_dataset(
                         'psf_frames',
-                        shape=(N, psf_h, psf_w),
+                        shape=(N, psf_crop_h, psf_crop_w),
                         dtype='float32',
-                        chunks=(ct_psf, psf_h, psf_w),
+                        chunks=(ct_psf, psf_crop_h, psf_crop_w),
                         compressor=compressor,
                     )
                     if verbose:
-                        psf_mb = N * psf_h * psf_w * 4 / 1e6
+                        psf_mb = N * psf_crop_h * psf_crop_w * 4 / 1e6
                         print(
                             "Including psf_frames in Zarr: shape=(%d,%d,%d), chunks=(%d,%d,%d), "
-                            "raw_size≈%.0f MB" % (N, psf_h, psf_w, ct_psf, psf_h, psf_w, psf_mb)
+                            "raw_size≈%.0f MB" % (N, psf_crop_h, psf_crop_w, ct_psf, psf_crop_h, psf_crop_w, psf_mb)
                         )
                     for k0 in tqdm(range(0, N, ct_psf), desc='Writing zarr psf_frames', disable=not verbose):
                         k1 = min(k0 + ct_psf, N)
-                        z_psf[k0:k1] = psf_src[k0:k1].astype('float32')
+                        z_psf[k0:k1] = psf_src[k0:k1, psf_y0:psf_y1, psf_x0:psf_x1].astype('float32')
+                z_root_dir.attrs['psf_roi'] = [psf_y0, psf_y1, psf_x0, psf_x1]
+                if z_root_zip is not None:
+                    z_root_zip.attrs['psf_roi'] = [psf_y0, psf_y1, psf_x0, psf_x1]
 
             if verbose:
                 print("Also writing Zarr directory store: %s" % zarr_dir_target)
@@ -425,6 +451,8 @@ def build_ROI_access(
                     print("  included: /timestamps, /peaks, /centroids (+ attr t0 if present)")
                 if zarr_include_psf:
                     print("  included: /psf_frames")
+                    if zarr_psf_roi is not None:
+                        print("  psf crop: %s" % ([psf_y0, psf_y1, psf_x0, psf_x1]))
 
     return out_key
 

@@ -361,7 +361,7 @@ canvas {
       <div class="panel-grid">
         <div class="card">
           <h4>PSF Frame</h4>
-          <canvas id="psf-canvas" width="320" height="320"></canvas>
+          <canvas id="psf-canvas" width="480" height="480"></canvas>
         </div>
         <div class="card">
           <h4>PL ROI Frame (best effort)</h4>
@@ -1065,7 +1065,7 @@ async function loadFrameTab() {
 
     const psf = await arrays.psf.readPsfFrame(k);
     drawHeat(document.getElementById('psf-canvas'), psf.data, psf.w, psf.h);
-    setCanvasDisplaySize(document.getElementById('psf-canvas'), psf.w, psf.h, 360, 260);
+    setCanvasDisplaySize(document.getElementById('psf-canvas'), psf.w, psf.h, 640, 520);
 
     const roiMsg = document.getElementById('roi-msg');
     const roiCanvas = document.getElementById('roi-canvas');
