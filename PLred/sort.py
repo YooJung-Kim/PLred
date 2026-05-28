@@ -70,7 +70,250 @@ def find_data_between(datadir, obs_start, obs_end,
     return valid_files
 
 
-def script_match_timestamps(configname):
+def script_match_timestamps(
+    configname,
+    verbose=False,
+):
+    """
+    LAYER 1: Fast timestamp matching (no frame loading).
+
+    Match timestamps between PSF and PL cameras and write intermediate H5 file.
+    This layer is fast, deterministic, and can be reused by multiple processing strategies.
+
+    Config file format:
+        [Fastcam]
+        obs_date        = 20250211
+        start_time      = 11:59:00
+        end_time        = 12:20:09
+        path            = /mnt/sdata/20250211/palila/
+
+        [Slowcam]
+        timestamp_dir   = /mnt/userdata/yjkim/20250211_betcmi/timestamps/
+        nbin            = 1
+
+        [Output]
+        outname         = /mnt/userdata/yjkim/output
+        filename        = observation_matched
+
+        [Options]
+        show_plot       = False
+        crop_width      = 20
+
+    Parameters
+    ----------
+    configname : str
+        Path to config file
+    verbose : bool, optional
+        Print progress
+
+    Returns
+    -------
+    intermediate_h5_path : str
+        Path to intermediate H5 file (input for Layer 2)
+    """
+    from .h5_consolidation import (
+        validate_timestamp_matching,
+        compute_frame_durations,
+        build_matching_dict,
+        write_intermediate_matched_h5,
+    )
+
+    config = ConfigObj(configname)
+
+    fastcam_dir = config['Fastcam']['path']
+    fastcam_start_time = config['Fastcam']['start_time']
+    fastcam_end_time = config['Fastcam']['end_time']
+    obs_date = config['Fastcam']['obs_date']
+
+    slowcam_timestamps_dir = config['Slowcam']['timestamp_dir']
+    try:
+        slowcam_nbin = int(config['Slowcam']['nbin'])
+    except:
+        slowcam_nbin = 1
+
+    outname = config['Output']['outname']
+    filename = config['Output']['filename']
+
+    show_plot = (config['Options'].get('show_plot', 'False')).lower() == 'true'
+
+    os.makedirs(outname, exist_ok=True)
+
+    if verbose:
+        print("\n" + "="*70)
+        print("LAYER 1: Timestamp Matching")
+        print("="*70)
+
+    # ======== Find data files ========
+    fastcam_timestampfiles = find_data_between(fastcam_dir, fastcam_start_time, fastcam_end_time, footer='.txt')
+    slowcam_timestampfiles = np.sort(glob.glob(slowcam_timestamps_dir + '*.txt'))
+
+    if verbose:
+        print(f"Found {len(fastcam_timestampfiles)} PSF timestamp files")
+        print(f"Found {len(slowcam_timestampfiles)} PL timestamp files")
+
+    # ======== Read timestamps ========
+    fastcam_timestamps_list = []
+    fastcam_fileinds_list = []
+    fastcam_frameinds_list = []
+
+    for file_idx, tsfile in enumerate(fastcam_timestampfiles):
+        data = np.genfromtxt(tsfile)
+        if data.ndim == 1:
+            data = data.reshape(1, -1)
+        frameinds = data[:, 0].astype(int)
+        timestamps = data[:, 4]
+
+        fastcam_timestamps_list.append(timestamps)
+        fastcam_fileinds_list.append(np.full(len(timestamps), file_idx, dtype=int))
+        fastcam_frameinds_list.append(frameinds)
+
+    fastcam_timestamps = np.concatenate(fastcam_timestamps_list)
+    fastcam_fileinds = np.concatenate(fastcam_fileinds_list)
+    fastcam_frameinds = np.concatenate(fastcam_frameinds_list)
+
+    sort_idx = np.argsort(fastcam_timestamps)
+    fastcam_timestamps = fastcam_timestamps[sort_idx]
+    fastcam_fileinds = fastcam_fileinds[sort_idx]
+    fastcam_frameinds = fastcam_frameinds[sort_idx]
+
+    # Read PL camera timestamps
+    slowcam_timestamps_list = []
+    slowcam_fileinds_list = []
+    slowcam_frameinds_list = []
+
+    for file_idx, tsfile in enumerate(slowcam_timestampfiles):
+        data = np.genfromtxt(tsfile)
+        if data.ndim == 1:
+            data = data.reshape(1, -1)
+        frameinds = data[:, 0].astype(int)
+        timestamps = data[:, 4]
+
+        slowcam_timestamps_list.append(timestamps)
+        slowcam_fileinds_list.append(np.full(len(timestamps), file_idx, dtype=int))
+        slowcam_frameinds_list.append(frameinds)
+
+    slowcam_timestamps = np.concatenate(slowcam_timestamps_list)
+    slowcam_fileinds = np.concatenate(slowcam_fileinds_list)
+    slowcam_frameinds = np.concatenate(slowcam_frameinds_list)
+
+    sort_idx = np.argsort(slowcam_timestamps)
+    slowcam_timestamps = slowcam_timestamps[sort_idx]
+    slowcam_fileinds = slowcam_fileinds[sort_idx]
+    slowcam_frameinds = slowcam_frameinds[sort_idx]
+
+    if verbose:
+        print(f"PSF camera: {len(fastcam_timestamps)} timestamps")
+        print(f"PL camera: {len(slowcam_timestamps)} timestamps")
+
+    # ======== Validate and filter timestamps ========
+    idx_fastcam, idx_slowcam = validate_timestamp_matching(
+        fastcam_timestamps,
+        slowcam_timestamps,
+        atol=1e-4,
+        verbose=verbose,
+    )
+
+    fastcam_timestamps = fastcam_timestamps[idx_fastcam]
+    fastcam_fileinds = fastcam_fileinds[idx_fastcam]
+    fastcam_frameinds = fastcam_frameinds[idx_fastcam]
+
+    slowcam_timestamps = slowcam_timestamps[idx_slowcam]
+    slowcam_fileinds = slowcam_fileinds[idx_slowcam]
+    slowcam_frameinds = slowcam_frameinds[idx_slowcam]
+
+    # ======== Handle slowcam_nbin ========
+    if slowcam_nbin > 1:
+        n_total = len(slowcam_timestamps)
+        n_keep = (n_total // slowcam_nbin) * slowcam_nbin
+        n_drop = n_total - n_keep
+        if n_drop > 0:
+            print(f"WARNING: slowcam_nbin={slowcam_nbin} — dropping last {n_drop} timestamp(s)")
+        slowcam_timestamps = slowcam_timestamps[:n_keep:slowcam_nbin]
+        slowcam_fileinds = slowcam_fileinds[:n_keep:slowcam_nbin]
+        slowcam_frameinds = slowcam_frameinds[:n_keep:slowcam_nbin]
+
+    # ======== Compute frame durations ========
+    fastcam_frame_end_times = compute_frame_durations(fastcam_timestamps, fastcam_fileinds)
+
+    # ======== Bisect and build matching dict ========
+    bisect_inds = np.array([bisect(fastcam_timestamps, t) for t in slowcam_timestamps])
+    bisect_arr = bisect_inds
+    max_bisect = int(bisect_arr.max())
+
+    if max_bisect == 0:
+        raise ValueError(
+            "No PSF camera timestamp is later than any PL camera timestamp. "
+            "Check that both cameras cover the same time interval."
+        )
+
+    ind_end = int(np.argmax(bisect_arr == max_bisect))
+    if ind_end == 0:
+        raise ValueError(
+            "ind_end resolved to 0: all bisect_inds equal the maximum (%d). "
+            "The PSF camera timestamps may not overlap with the PL camera timestamps."
+            % max_bisect
+        )
+
+    ind_start = 0
+    if verbose:
+        print(f"Timestamp overlap: {ind_end - ind_start} PL frames")
+
+    Dict, matched_timestamps, n_skipped = build_matching_dict(
+        fastcam_timestamps,
+        slowcam_timestamps,
+        bisect_inds,
+        ind_start,
+        ind_end,
+        frame_end_times=fastcam_frame_end_times,
+        verbose=verbose,
+    )
+
+    if n_skipped > 0:
+        print(f"WARNING: {n_skipped} PL frame(s) skipped (timestamp before all PSF timestamps).")
+
+    if show_plot:
+        plt.figure(figsize=(12, 4))
+        plt.plot(bisect_inds, 'o-', ms=1)
+        plt.axvline(ind_start)
+        plt.axvline(ind_end)
+        plt.xlabel('PL camera frame index')
+        plt.ylabel('PSF camera frame index')
+        plt.title('Bisect results (timestamp matching)')
+        plt.grid(True, alpha=0.3)
+        plt.show()
+
+    # ======== Write intermediate H5 ========
+    config_dict = {
+        'obs_date': obs_date,
+        'obs_start': fastcam_start_time,
+        'obs_end': fastcam_end_time,
+        'slowcam_nbin': slowcam_nbin,
+    }
+
+    intermediate_h5_path = os.path.join(outname, f'{filename}_intermediate.h5')
+    from .h5_consolidation import write_intermediate_matched_h5
+
+    write_intermediate_matched_h5(
+        intermediate_h5_path,
+        fastcam_timestamps,
+        fastcam_fileinds,
+        fastcam_frameinds,
+        fastcam_timestampfiles,
+        slowcam_timestamps,
+        slowcam_fileinds,
+        slowcam_frameinds,
+        slowcam_timestampfiles,
+        Dict,
+        matched_timestamps,
+        config_dict,
+        verbose=verbose,
+    )
+
+    if verbose:
+        print(f"\n✓ Layer 1 complete: {intermediate_h5_path}")
+        print(f"  Ready for Layer 2 processing")
+
+    return intermediate_h5_path
 
     '''
     This script is copied from scexao6:/mnt/userdata/yjkim/timestamp_matched_palila/script_match_timestamps.py
@@ -1070,4 +1313,629 @@ def make_responsemaps(filename, footer = '_spec', nfib = 38, nwav = 200, psffram
     hdul.writeto(filename + '_couplingmap.fits', overwrite=True)
     print("remapped_couplingmap.fits saved in %s" % filename+ '_couplingmap.fits')
 
-    return
+
+def script_process_matched_timestamps(
+    intermediate_h5_path,
+    fastcam_files,
+    fastcam_dir,
+    slowcam_files,
+    output_path,
+    output_filename,
+    write_raw_plcam=False,
+    peak_min=None,
+    peak_max=None,
+    time_min=None,
+    time_max=None,
+    crop_width=20,
+    verbose=False,
+):
+    """
+    LAYER 2: Process matched timestamps (load frames, compute features).
+
+    Takes intermediate H5 from Layer 1 and produces consolidated H5 with:
+    - Loaded PSF frames from FITS files
+    - Loaded PL frames (optional, raw)
+    - Computed centroids and peaks
+    - Timestamp arrays
+    - All bugfixes applied
+
+    Parameters
+    ----------
+    intermediate_h5_path : str
+        Path to intermediate H5 from Layer 1
+    fastcam_files : list of str
+        List of PSF camera FITS file paths
+    fastcam_dir : str
+        Directory containing PSF FITS files
+    slowcam_files : list of str
+        List of PL camera FITS file paths
+    output_path : str
+        Output directory
+    output_filename : str
+        Base filename for output (will add _core.h5)
+    write_raw_plcam : bool, optional
+        If True, also write raw PL frames
+    peak_min : float, optional
+        Filter: minimum PSF peak value
+    peak_max : float, optional
+        Filter: maximum PSF peak value
+    time_min : float, optional
+        Filter: minimum timestamp
+    time_max : float, optional
+        Filter: maximum timestamp
+    crop_width : int, optional
+        Width for centroid computation
+    verbose : bool, optional
+        Print progress
+
+    Returns
+    -------
+    outnames : dict
+        Paths to output files (core.h5, optional raw_plcam.h5)
+    """
+    from .h5_consolidation import (
+        read_intermediate_matched_h5,
+        write_consolidated_h5_core,
+        write_plcam_raw_h5,
+        filter_by_peak_and_time,
+        plot_matching_diagnostics,
+    )
+
+    if verbose:
+        print("\n" + "="*70)
+        print("LAYER 2: Process Matched Timestamps")
+        print("="*70)
+
+    # ======== Read Layer 1 output ========
+    matched_data = read_intermediate_matched_h5(intermediate_h5_path, verbose=verbose)
+
+    fastcam_timestamps = matched_data['fastcam_timestamps']
+    fastcam_fileinds = matched_data['fastcam_fileinds']
+    fastcam_frameinds = matched_data['fastcam_frameinds']
+    slowcam_fileinds = matched_data['slowcam_fileinds']
+    slowcam_frameinds = matched_data['slowcam_frameinds']
+    matched_timestamps = matched_data['matched_timestamps']
+    matching_dict = matched_data['matching_dict']
+    config_dict = matched_data['config_dict']
+
+    os.makedirs(output_path, exist_ok=True)
+
+    if verbose:
+        print(f"Loaded {len(matched_timestamps)} matched pairs from Layer 1")
+
+    # ======== Load PSF frames and compute centroids ========
+    if verbose:
+        print("Loading PSF camera frames...")
+
+    psfcam_frames = []
+    psfcam_centroids = []
+    psfcam_peaks = []
+    psfcam_timestamps_matched = []
+    plcam_file_indices = []
+    plcam_frame_indices = []
+
+    current_file_idx = -1
+    current_file_data = None
+
+    for slowcam_idx, fastcam_dict in tqdm(matching_dict.items(), desc='Loading frames', disable=not verbose):
+        for fastcam_idx, weight in fastcam_dict.items():
+            if weight <= 0:
+                continue
+
+            file_idx = fastcam_fileinds[fastcam_idx]
+            frame_idx = fastcam_frameinds[fastcam_idx]
+
+            # Load FITS frame if needed
+            if file_idx != current_file_idx:
+                if current_file_data is not None:
+                    del current_file_data
+                current_file_idx = file_idx
+                try:
+                    current_file_data = fits.getdata(fastcam_files[file_idx])
+                except:
+                    # Fallback: try file from directory
+                    current_file_data = fits.getdata(
+                        os.path.join(fastcam_dir, os.path.basename(fastcam_files[file_idx]))
+                    )
+
+            # Extract frame
+            if current_file_data.ndim == 3:
+                frame = current_file_data[frame_idx]
+            else:
+                frame = current_file_data
+
+            # Compute centroid and peak
+            peak = np.max(frame)
+            try:
+                cx, cy = subpixel_centroid_2d(frame, crop_width=crop_width)
+            except:
+                cx, cy = frame.shape[1] / 2, frame.shape[0] / 2
+
+            psfcam_frames.append(frame.astype('float32'))
+            psfcam_centroids.append([cx, cy])
+            psfcam_peaks.append(peak)
+            psfcam_timestamps_matched.append(matched_timestamps[slowcam_idx])
+
+            plcam_file_indices.append(slowcam_fileinds[slowcam_idx])
+            plcam_frame_indices.append(slowcam_frameinds[slowcam_idx])
+
+    psfcam_frames = np.array(psfcam_frames, dtype='float32')
+    psfcam_centroids = np.array(psfcam_centroids, dtype='float32')
+    psfcam_peaks = np.array(psfcam_peaks, dtype='float32')
+    psfcam_timestamps_matched = np.array(psfcam_timestamps_matched, dtype='float64')
+    plcam_file_indices = np.array(plcam_file_indices, dtype='int64')
+    plcam_frame_indices = np.array(plcam_frame_indices, dtype='int64')
+
+    if verbose:
+        print(f"Loaded {len(psfcam_frames)} PSF frames with computed centroids and peaks")
+
+    # ======== Apply filtering ========
+    filter_mask = filter_by_peak_and_time(
+        psfcam_timestamps_matched,
+        psfcam_peaks,
+        peak_min=peak_min,
+        peak_max=peak_max,
+        time_min=time_min,
+        time_max=time_max,
+        verbose=verbose,
+    )
+
+    psfcam_frames = psfcam_frames[filter_mask]
+    psfcam_centroids = psfcam_centroids[filter_mask]
+    psfcam_peaks = psfcam_peaks[filter_mask]
+    psfcam_timestamps_matched = psfcam_timestamps_matched[filter_mask]
+    plcam_file_indices = plcam_file_indices[filter_mask]
+    plcam_frame_indices = plcam_frame_indices[filter_mask]
+
+    # ======== Write consolidated H5 ========
+    outnames = {}
+
+    # Add filtering info to config
+    config_dict.update({
+        'crop_width': crop_width,
+        'peak_filter': {'min': peak_min, 'max': peak_max},
+        'time_filter': {'min': time_min, 'max': time_max},
+    })
+
+    # Write core H5
+    core_h5_path = os.path.join(output_path, f'{output_filename}_core.h5')
+    write_consolidated_h5_core(
+        core_h5_path,
+        psfcam_frames,
+        psfcam_centroids,
+        psfcam_peaks,
+        psfcam_timestamps_matched,
+        plcam_file_indices,
+        plcam_frame_indices,
+        slowcam_files,
+        config_dict,
+        centroid_method='subpixel',
+        verbose=verbose,
+    )
+    outnames['core'] = core_h5_path
+
+    # Optionally write raw PL H5
+    if write_raw_plcam:
+        raw_h5_path = os.path.join(output_path, f'{output_filename}_plcam_raw.h5')
+        try:
+            pl_shape = fits.getdata(slowcam_files[0]).shape
+            if len(pl_shape) == 3:
+                pl_ny, pl_nx = pl_shape[1:]
+            else:
+                pl_ny, pl_nx = pl_shape
+        except:
+            pl_ny, pl_nx = 2000, 500
+
+        write_plcam_raw_h5(
+            raw_h5_path,
+            slowcam_files,
+            plcam_file_indices,
+            plcam_frame_indices,
+            (pl_ny, pl_nx),
+            core_h5_ref=core_h5_path,
+            compression='lz4',
+            verbose=verbose,
+        )
+        outnames['raw_plcam'] = raw_h5_path
+
+    # ======== Diagnostic plots ========
+    if verbose:
+        print("Generating diagnostic plots...")
+        try:
+            fig = plot_matching_diagnostics(core_h5_path)
+            plot_path = os.path.join(output_path, f'{output_filename}_diagnostics.png')
+            fig.savefig(plot_path, dpi=150, bbox_inches='tight')
+            print(f"  Saved diagnostic plot: {plot_path}")
+        except Exception as e:
+            print(f"  Warning: could not generate diagnostic plots: {e}")
+
+    if verbose:
+        print(f"\n✓ Layer 2 complete")
+        print(f"  Core H5: {core_h5_path}")
+        if write_raw_plcam:
+            print(f"  Raw PL H5: {raw_h5_path}")
+
+    return outnames
+    """
+    Match timestamps between PSF and PL cameras and write consolidated H5 output.
+
+    This is the modern alternative to script_match_timestamps() that writes
+    consolidated HDF5 files designed for efficient on-the-fly spatial binning.
+
+    INCLUDES ALL BUGFIXES FROM sort4.py:
+      - Float tolerance matching (not exact equality)
+      - Dead-time correction between FITS files
+      - Edge case handling (bisect_inds==0, single frame spans interval, etc.)
+      - Proper error reporting and warnings
+      - nbin truncation warnings
+
+    Parameters
+    ----------
+    configname : str
+        Path to config file (same format as script_match_timestamps)
+    output_format : str, optional
+        'h5' for consolidated HDF5 output, 'legacy' for old .pkl/.npy format
+    write_raw_plcam : bool, optional
+        If True, also write raw PL camera frames to separate H5 file (~50-100 GB)
+    peak_min : float, optional
+        Filter: minimum PSF peak value (Strehl proxy)
+    peak_max : float, optional
+        Filter: maximum PSF peak value
+    time_min : float, optional
+        Filter: minimum timestamp (unix epoch)
+    time_max : float, optional
+        Filter: maximum timestamp
+    verbose : bool, optional
+        Print progress information
+
+    Returns
+    -------
+    outnames : dict
+        Dictionary with keys 'core', 'raw_plcam' (if written), 'legacy' (if output_format='legacy')
+        containing paths to output files
+    """
+    from .h5_consolidation import (
+        write_consolidated_h5_core,
+        write_plcam_raw_h5,
+        filter_by_peak_and_time,
+        validate_timestamp_matching,
+        compute_frame_durations,
+        build_matching_dict,
+        plot_matching_diagnostics,
+    )
+
+    # ======== Read config (same as original script_match_timestamps) ========
+    config = ConfigObj(configname)
+
+    fastcam_dir = config['Fastcam']['path']
+    fastcam_start_time = config['Fastcam']['start_time']
+    fastcam_end_time = config['Fastcam']['end_time']
+    obs_date = config['Fastcam']['obs_date']
+
+    fastcam_dark_file = config['Fastcam']['dark_file']
+    if fastcam_dark_file.strip() == '':
+        fastcam_dark_start_time = config['Fastcam']['dark_start_time']
+        fastcam_dark_end_time = config['Fastcam']['dark_end_time']
+
+    slowcam_timestamps_dir = config['Slowcam']['timestamp_dir']
+    try:
+        slowcam_nbin = int(config['Slowcam']['nbin'])
+    except:
+        slowcam_nbin = 1
+
+    outname = config['Output']['outname']
+    filename = config['Output']['filename']
+
+    show_plot = (config['Options'].get('show_plot', 'False')).lower() == 'true'
+    crop_width = int(config['Options']['crop_width'])
+
+    os.makedirs(outname, exist_ok=True)
+
+    # ======== Find data files ========
+    fastcam_timestampfiles = find_data_between(fastcam_dir, fastcam_start_time, fastcam_end_time, footer='.txt')
+    if fastcam_dark_file.strip() == '':
+        fastcam_darkframes = find_data_between(fastcam_dir, fastcam_dark_start_time, fastcam_dark_end_time, footer='.fits')
+    else:
+        fastcam_darkframes = [fastcam_dark_file]
+
+    slowcam_timestampfiles = np.sort(glob.glob(slowcam_timestamps_dir + '*.txt'))
+
+    if verbose:
+        print(f"Found {len(fastcam_timestampfiles)} PSF camera timestamp files")
+        print(f"Found {len(slowcam_timestampfiles)} PL camera timestamp files")
+
+    # ======== Read and process timestamps (read each file only once!) ========
+    # PSF camera timestamps
+    fastcam_timestamps_list = []
+    fastcam_fileinds_list = []
+    fastcam_frameinds_list = []
+    
+    for file_idx, tsfile in enumerate(fastcam_timestampfiles):
+        # Format: col 0 = frame index, col 4 = unix timestamp
+        data = np.genfromtxt(tsfile)
+        if data.ndim == 1:
+            data = data.reshape(1, -1)
+        frameinds = data[:, 0].astype(int)
+        timestamps = data[:, 4]
+        
+        fastcam_timestamps_list.append(timestamps)
+        fastcam_fileinds_list.append(np.full(len(timestamps), file_idx, dtype=int))
+        fastcam_frameinds_list.append(frameinds)
+    
+    fastcam_timestamps = np.concatenate(fastcam_timestamps_list)
+    fastcam_fileinds = np.concatenate(fastcam_fileinds_list)
+    fastcam_frameinds = np.concatenate(fastcam_frameinds_list)
+    
+    # Sort by timestamp
+    sort_idx = np.argsort(fastcam_timestamps)
+    fastcam_timestamps = fastcam_timestamps[sort_idx]
+    fastcam_fileinds = fastcam_fileinds[sort_idx]
+    fastcam_frameinds = fastcam_frameinds[sort_idx]
+
+    # PL camera timestamps
+    slowcam_timestamps_list = []
+    slowcam_fileinds_list = []
+    slowcam_frameinds_list = []
+    
+    for file_idx, tsfile in enumerate(slowcam_timestampfiles):
+        # Format: col 0 = frame index, col 4 = unix timestamp
+        data = np.genfromtxt(tsfile)
+        if data.ndim == 1:
+            data = data.reshape(1, -1)
+        frameinds = data[:, 0].astype(int)
+        timestamps = data[:, 4]
+        
+        slowcam_timestamps_list.append(timestamps)
+        slowcam_fileinds_list.append(np.full(len(timestamps), file_idx, dtype=int))
+        slowcam_frameinds_list.append(frameinds)
+    
+    slowcam_timestamps = np.concatenate(slowcam_timestamps_list)
+    slowcam_fileinds = np.concatenate(slowcam_fileinds_list)
+    slowcam_frameinds = np.concatenate(slowcam_frameinds_list)
+    
+    # Sort by timestamp
+    sort_idx = np.argsort(slowcam_timestamps)
+    slowcam_timestamps = slowcam_timestamps[sort_idx]
+    slowcam_fileinds = slowcam_fileinds[sort_idx]
+    slowcam_frameinds = slowcam_frameinds[sort_idx]
+
+    if verbose:
+        print(f"PSF camera: {len(fastcam_timestamps)} timestamps")
+        print(f"PL camera: {len(slowcam_timestamps)} timestamps")
+
+    # ======== BUGFIX Issue 4: Validate timestamp matching with float tolerance ========
+    idx_fastcam, idx_slowcam = validate_timestamp_matching(
+        fastcam_timestamps,
+        slowcam_timestamps,
+        atol=1e-4,
+        verbose=verbose,
+    )
+
+    fastcam_timestamps = fastcam_timestamps[idx_fastcam]
+    fastcam_fileinds = fastcam_fileinds[idx_fastcam]
+    fastcam_frameinds = fastcam_frameinds[idx_fastcam]
+    
+    slowcam_timestamps = slowcam_timestamps[idx_slowcam]
+    slowcam_fileinds = slowcam_fileinds[idx_slowcam]
+    slowcam_frameinds = slowcam_frameinds[idx_slowcam]
+
+    if verbose:
+        print(f"After validation: {len(fastcam_timestamps)} PSF frames matched")
+
+    # ======== BUGFIX Issue 5: Handle slowcam_nbin truncation with warning ========
+    if slowcam_nbin > 1:
+        n_total = len(slowcam_timestamps)
+        n_keep = (n_total // slowcam_nbin) * slowcam_nbin
+        n_drop = n_total - n_keep
+        if n_drop > 0:
+            print(f"WARNING: slowcam_nbin={slowcam_nbin} — dropping last {n_drop} timestamp(s) "
+                  f"that do not fill a complete bin.")
+        slowcam_timestamps = slowcam_timestamps[:n_keep:slowcam_nbin]
+        slowcam_fileinds = slowcam_fileinds[:n_keep:slowcam_nbin]
+        slowcam_frameinds = slowcam_frameinds[:n_keep:slowcam_nbin]
+
+    # ======== Compute frame durations for dead-time correction ========
+    # (This accounts for gaps between FITS files)
+    fastcam_frame_end_times = compute_frame_durations(fastcam_timestamps, fastcam_fileinds)
+
+    # ======== Bisect and build matching dict ========
+    bisect_inds = np.array([bisect(fastcam_timestamps, t) for t in slowcam_timestamps])
+    bisect_arr = bisect_inds
+    max_bisect = int(bisect_arr.max())
+
+    # BUGFIX Issue 3: Proper error handling
+    if max_bisect == 0:
+        raise ValueError(
+            "No PSF camera timestamp is later than any PL camera timestamp. "
+            "Check that both cameras cover the same time interval."
+        )
+
+    ind_end = int(np.argmax(bisect_arr == max_bisect))
+    if ind_end == 0:
+        raise ValueError(
+            "ind_end resolved to 0: all bisect_inds equal the maximum (%d). "
+            "The PSF camera timestamps may not overlap with the PL camera timestamps."
+            % max_bisect
+        )
+
+    ind_start = 0
+    if verbose:
+        print(f"Timestamp overlap: {ind_end - ind_start} slowcam frames")
+
+    # BUGFIX Bug 1 & Bug 2: Use robust matching dict builder
+    Dict, matched_timestamps, n_skipped = build_matching_dict(
+        fastcam_timestamps,
+        slowcam_timestamps,
+        bisect_inds,
+        ind_start,
+        ind_end,
+        frame_end_times=fastcam_frame_end_times,
+        verbose=verbose,
+    )
+
+    if n_skipped > 0:
+        print(f"WARNING: {n_skipped} PL frame(s) skipped (timestamp before all PSF timestamps).")
+
+    if show_plot:
+        plt.figure(figsize=(12, 4))
+        plt.plot(bisect_inds, 'o-', ms=1)
+        plt.axvline(ind_start)
+        plt.axvline(ind_end)
+        plt.xlabel('PL camera frame index')
+        plt.ylabel('PSF camera frame index')
+        plt.title('Bisect results (timestamp matching)')
+        plt.grid(True, alpha=0.3)
+        plt.show()
+
+    # ======== PLACEHOLDER: Load PSF camera frames and compute centroids ========
+    # (YOUR ACTUAL FRAME LOADING LOGIC GOES HERE)
+    # TODO: Replace this with actual FITS frame loading from fastcam_dir
+    # See original script_match_timestamps() for reference
+    
+    if verbose:
+        print("Loading PSF camera frames...")
+
+    psfcam_frames = []
+    psfcam_centroids = []
+    psfcam_peaks = []
+    psfcam_timestamps_matched = []
+    plcam_file_indices = []
+    plcam_frame_indices = []
+
+    # For each matched pair, extract frame and compute centroid
+    for slowcam_idx, fastcam_dict in Dict.items():
+        for fastcam_idx, weight in fastcam_dict.items():
+            if weight <= 0:
+                continue
+
+            # TODO: Load actual frame from fastcam FITS files
+            # frame = load_fastcam_frame(fastcam_timestampfiles, fastcam_fileinds[fastcam_idx], fastcam_frameinds[fastcam_idx])
+            # For now, create placeholder:
+            frame = np.random.randn(128, 128).astype('float32')
+
+            peak = np.max(frame)
+            try:
+                cx, cy = subpixel_centroid_2d(frame, crop_width=crop_width)
+            except:
+                cx, cy = 64, 64  # fallback to center
+
+            psfcam_frames.append(frame)
+            psfcam_centroids.append([cx, cy])
+            psfcam_peaks.append(peak)
+            psfcam_timestamps_matched.append(matched_timestamps[slowcam_idx])
+
+            plcam_file_indices.append(slowcam_fileinds[slowcam_idx])
+            plcam_frame_indices.append(slowcam_frameinds[slowcam_idx])
+
+    psfcam_frames = np.array(psfcam_frames, dtype='float32')
+    psfcam_centroids = np.array(psfcam_centroids, dtype='float32')
+    psfcam_peaks = np.array(psfcam_peaks, dtype='float32')
+    psfcam_timestamps_matched = np.array(psfcam_timestamps_matched, dtype='float64')
+    plcam_file_indices = np.array(plcam_file_indices, dtype='int64')
+    plcam_frame_indices = np.array(plcam_frame_indices, dtype='int64')
+
+    if verbose:
+        print(f"Loaded {len(psfcam_frames)} matched frames")
+
+    # ======== Apply filtering ========
+    filter_mask = filter_by_peak_and_time(
+        psfcam_timestamps_matched,
+        psfcam_peaks,
+        peak_min=peak_min,
+        peak_max=peak_max,
+        time_min=time_min,
+        time_max=time_max,
+        verbose=verbose,
+    )
+
+    psfcam_frames = psfcam_frames[filter_mask]
+    psfcam_centroids = psfcam_centroids[filter_mask]
+    psfcam_peaks = psfcam_peaks[filter_mask]
+    psfcam_timestamps_matched = psfcam_timestamps_matched[filter_mask]
+    plcam_file_indices = plcam_file_indices[filter_mask]
+    plcam_frame_indices = plcam_frame_indices[filter_mask]
+
+    # ======== Write output ========
+    outnames = {}
+
+    if output_format == 'h5':
+        # Build config dict
+        config_dict = {
+            'obs_date': obs_date,
+            'obs_start': fastcam_start_time,
+            'obs_end': fastcam_end_time,
+            'crop_width': crop_width,
+            'slowcam_nbin': slowcam_nbin,
+            'peak_filter': {'min': peak_min, 'max': peak_max},
+            'time_filter': {'min': time_min, 'max': time_max},
+        }
+
+        # Write core H5
+        core_h5_path = os.path.join(outname, f'{filename}_core.h5')
+        write_consolidated_h5_core(
+            core_h5_path,
+            psfcam_frames,
+            psfcam_centroids,
+            psfcam_peaks,
+            psfcam_timestamps_matched,
+            plcam_file_indices,
+            plcam_frame_indices,
+            slowcam_timestampfiles,
+            config_dict,
+            centroid_method='subpixel',
+            verbose=verbose,
+        )
+        outnames['core'] = core_h5_path
+
+        # Optionally write raw PL camera H5
+        if write_raw_plcam:
+            raw_h5_path = os.path.join(outname, f'{filename}_plcam_raw.h5')
+            # You'll need to determine PL camera frame shape
+            # For now, assuming it's in the FITS headers
+            try:
+                pl_shape = fits.getdata(slowcam_timestampfiles[0]).shape
+                if len(pl_shape) == 3:
+                    pl_ny, pl_nx = pl_shape[1:]
+                else:
+                    pl_ny, pl_nx = pl_shape
+            except:
+                pl_ny, pl_nx = 2000, 500  # Default fallback
+
+            write_plcam_raw_h5(
+                raw_h5_path,
+                slowcam_timestampfiles,
+                plcam_file_indices,
+                plcam_frame_indices,
+                (pl_ny, pl_nx),
+                core_h5_ref=core_h5_path,
+                compression='lz4',
+                verbose=verbose,
+            )
+            outnames['raw_plcam'] = raw_h5_path
+
+        if verbose:
+            print(f"\n✓ Consolidated H5 output written to {outname}")
+            print(f"  Core file: {core_h5_path}")
+            if write_raw_plcam:
+                print(f"  Raw PL camera file: {raw_h5_path}")
+
+    else:
+        # Legacy output format (original behavior)
+        legacy_outpath = os.path.join(outname, f'{filename}_matched.pkl')
+        with open(legacy_outpath, 'wb') as f:
+            pickle.dump(
+                {
+                    'psfcam_frames': psfcam_frames,
+                    'centroids': psfcam_centroids,
+                    'peaks': psfcam_peaks,
+                    'timestamps': psfcam_timestamps_matched,
+                    'plcam_file_indices': plcam_file_indices,
+                    'plcam_frame_indices': plcam_frame_indices,
+                },
+                f
+            )
+        outnames['legacy'] = legacy_outpath
+        if verbose:
+            print(f"Legacy output written to {legacy_outpath}")
+
+    return outnames
