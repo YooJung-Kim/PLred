@@ -79,6 +79,25 @@ def _make_zarr_gzip(level):
     )
 
 
+def _open_zarr_store(zarr_target, zarr_zip):
+    """Return a Zarr store object/path compatible with installed zarr version(s)."""
+    if not zarr_zip:
+        return zarr_target
+
+    # Older zarr exposed ZipStore at top-level
+    if _ZARR_AVAILABLE and hasattr(zarr, 'ZipStore'):
+        return zarr.ZipStore(zarr_target, mode='w')
+
+    # Newer zarr exposes stores via zarr.storage namespace
+    if _ZARR_AVAILABLE and hasattr(zarr, 'storage') and hasattr(zarr.storage, 'ZipStore'):
+        return zarr.storage.ZipStore(zarr_target, mode='w')
+
+    raise ImportError(
+        "Could not create ZipStore for this zarr version. "
+        "Try upgrading zarr or set zarr_zip=False for directory output."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -265,6 +284,7 @@ def build_ROI_access(
         # Open zarr store alongside if requested
         z_dst = None
         z_root = None
+        z_store = None
         if zarr_path is not None:
             if not _ZARR_AVAILABLE:
                 raise ImportError(
@@ -275,10 +295,8 @@ def build_ROI_access(
             if zarr_zip:
                 if not zarr_target.endswith('.zip'):
                     zarr_target = zarr_target + '.zip'
-                store = zarr.ZipStore(zarr_target, mode='w')
-            else:
-                store = zarr_target
-            z_root = zarr.open_group(store, mode='w')
+            z_store = _open_zarr_store(zarr_target, zarr_zip)
+            z_root = zarr.open_group(z_store, mode='w')
             z_dst = z_root.create_dataset(
                 'roi_access',
                 shape=(roi_h, roi_w, N), dtype='float32',
@@ -342,8 +360,8 @@ def build_ROI_access(
             if z_dst is not None:
                 z_dst[:, :, t0:t1] = transposed
 
-        if z_dst is not None and zarr_zip:
-            z_dst.store.close()
+        if zarr_zip and z_store is not None and hasattr(z_store, 'close'):
+            z_store.close()
 
         if verbose:
             print("roi_access written to '%s'" % out_key)
