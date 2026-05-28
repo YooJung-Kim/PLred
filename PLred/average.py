@@ -37,6 +37,12 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 from astropy.stats import sigma_clip
 
+try:
+    import zarr
+    _ZARR_AVAILABLE = True
+except ImportError:
+    _ZARR_AVAILABLE = False
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -93,6 +99,153 @@ def _apply_filter(peaks, timestamps, strehl_min, strehl_max, time_min, time_max)
     return mask
 
 
+def _has_roi_access(f, key="plcam/roi_access"):
+    """Return True if the ROI time-series cache dataset exists in the open HDF5 file."""
+    return key in f
+
+
+# ---------------------------------------------------------------------------
+# build_ROI_access
+# ---------------------------------------------------------------------------
+
+def build_ROI_access(
+    giant_h5,
+    roi,
+    out_key="plcam/roi_access",
+    chunk_t=2048,
+    compression="gzip",
+    compression_opts=4,
+    overwrite=False,
+    zarr_path=None,
+    verbose=True,
+):
+    """
+    Build a transposed ROI cache for fast pixel time-series reads in explore_grid().
+
+    Two complementary layouts live in the same giant H5:
+
+      /plcam/frames     (N, ny, nx)       chunks=(1, ny, nx)    — frame-wise averaging
+      /plcam/roi_access (roi_h, roi_w, N) chunks=(1, 1, chunk_t) — pixel time-series
+
+    Reading roi_access[local_y, local_x, :] decompresses ceil(N/chunk_t) chunks
+    instead of N full-frame chunks, giving ~ny*nx/chunk_t speedup for explore_grid().
+    ROI cache is optional and should cover only the pixels of interest, e.g. a
+    single spectral trace (400×1) or a small sky region.
+
+    Parameters
+    ----------
+    giant_h5 : str
+        Path to the giant H5. Opened in r+ mode.
+    roi : tuple of int
+        (y0, y1, x0, x1) in original PLcam pixel coordinates.
+    out_key : str
+        HDF5 dataset path for the cache.
+    chunk_t : int
+        Time-axis chunk size.
+    compression, compression_opts : str, int
+        HDF5 compression.
+    overwrite : bool
+        If True, delete and rebuild any existing cache.
+    zarr_path : str, optional
+        If given, also write the cache to a Zarr store at this path.
+        Supports directory stores (.zarr) and zip stores (.zip).
+        Useful for HTML viewers (zarr.js / zarrita compatible).
+        Requires the `zarr` package.
+    verbose : bool
+    """
+    y0, y1, x0, x1 = roi
+    roi_h, roi_w = y1 - y0, x1 - x0
+
+    with h5py.File(giant_h5, 'r+') as f:
+        plcam_type = f.attrs.get('plcam_type', 'raw')
+        if plcam_type != 'raw':
+            raise ValueError(
+                "build_ROI_access only supports plcam_type='raw', got '%s'" % plcam_type)
+
+        src = f['plcam/frames']   # (N, ny, nx)
+        N, ny, nx = src.shape
+
+        if y0 < 0 or y1 > ny or x0 < 0 or x1 > nx or roi_h <= 0 or roi_w <= 0:
+            raise ValueError(
+                "roi (%d,%d,%d,%d) out of bounds for frames shape (%d,%d)" % (
+                    y0, y1, x0, x1, ny, nx))
+
+        if out_key in f:
+            if not overwrite:
+                if verbose:
+                    print("'%s' already exists. Pass overwrite=True to rebuild." % out_key)
+                dst = f[out_key]
+            else:
+                if verbose:
+                    print("Deleting existing '%s' (overwrite=True)" % out_key)
+                del f[out_key]
+                dst = None
+        else:
+            dst = None
+
+        ct = min(chunk_t, N)
+
+        if dst is None:
+            if verbose:
+                print("Building roi_access: roi=(%d,%d,%d,%d)  shape=(%d,%d,%d)  chunks=(1,1,%d)" % (
+                    y0, y1, x0, x1, roi_h, roi_w, N, ct))
+            grp_key, ds_name = out_key.rsplit('/', 1)
+            grp = f.require_group(grp_key)
+            dst = grp.create_dataset(
+                ds_name,
+                shape=(roi_h, roi_w, N),
+                dtype='float32',
+                chunks=(1, 1, ct),
+                compression=compression,
+                compression_opts=compression_opts,
+            )
+            dst.attrs['roi']    = [y0, y1, x0, x1]
+            dst.attrs['source'] = '/plcam/frames'
+            dst.attrs['layout'] = 'transposed_roi_time_access'
+
+        # Open zarr store alongside if requested
+        z_dst = None
+        if zarr_path is not None:
+            if not _ZARR_AVAILABLE:
+                raise ImportError(
+                    "zarr is required for zarr_path output. "
+                    "Install with: pip install zarr")
+            compressor = zarr.GZip(level=compression_opts)
+            if zarr_path.endswith('.zip'):
+                store = zarr.ZipStore(zarr_path, mode='w')
+            else:
+                store = zarr_path
+            z_dst = zarr.open(
+                store, mode='w',
+                shape=(roi_h, roi_w, N), dtype='float32',
+                chunks=(1, 1, ct), compressor=compressor,
+            )
+            z_dst.attrs['roi']    = [y0, y1, x0, x1]
+            z_dst.attrs['source'] = '/plcam/frames'
+            z_dst.attrs['layout'] = 'transposed_roi_time_access'
+            z_dst.attrs['n_frames'] = int(N)
+            if verbose:
+                print("Also writing Zarr store: %s" % zarr_path)
+
+        for t0 in tqdm(range(0, N, ct), desc='Building roi_access', disable=not verbose):
+            t1 = min(t0 + ct, N)
+            block = src[t0:t1, y0:y1, x0:x1]              # (t1-t0, roi_h, roi_w)
+            transposed = np.moveaxis(block, 0, -1)          # (roi_h, roi_w, t1-t0)
+            dst[:, :, t0:t1] = transposed
+            if z_dst is not None:
+                z_dst[:, :, t0:t1] = transposed
+
+        if z_dst is not None and zarr_path.endswith('.zip'):
+            z_dst.store.close()
+
+        if verbose:
+            print("roi_access written to '%s'" % out_key)
+            if zarr_path is not None:
+                print("Zarr cache written to '%s'" % zarr_path)
+
+    return out_key
+
+
 # ---------------------------------------------------------------------------
 # explore_grid
 # ---------------------------------------------------------------------------
@@ -106,6 +259,7 @@ def explore_grid(
     strehl_min=None, strehl_max=None,
     pix2mas=16.2,
     plcam_pixels=None,
+    roi_access_key="plcam/roi_access",
     plot=True,
 ):
     """
@@ -131,6 +285,10 @@ def explore_grid(
         List of (py, px) pixel coordinates to extract from PLcam and bin.
         Each pixel produces one 2D response map. For spectra mode, pass
         (ilambda, iport) pairs. If None, only grid coverage is shown.
+    roi_access_key : str
+        HDF5 key of the transposed ROI cache built by build_ROI_access().
+        If the dataset exists, pixel reads use the fast path (~ceil(N/chunk_t)
+        chunk reads). If absent, falls back to the slow ds[:, py, px] path.
     plot : bool
         Show diagnostic plots.
 
