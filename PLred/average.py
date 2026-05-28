@@ -131,6 +131,10 @@ def build_ROI_access(
     compression_opts=4,
     overwrite=False,
     zarr_path=None,
+    zarr_zip=True,
+    zarr_include_metadata=True,
+    zarr_include_psf=False,
+    zarr_psf_chunk_t=256,
     verbose=True,
 ):
     """
@@ -162,9 +166,27 @@ def build_ROI_access(
         If True, delete and rebuild any existing cache.
     zarr_path : str, optional
         If given, also write the cache to a Zarr store at this path.
-        Supports directory stores (.zarr) and zip stores (.zip).
+        By default (`zarr_zip=True`), this is written as a zip store. If the
+        provided path does not end with `.zip`, `.zip` is appended.
+        Set `zarr_zip=False` to write a directory store instead.
         Useful for HTML viewers (zarr.js / zarrita compatible).
         Requires the `zarr` package.
+    zarr_zip : bool
+        If True (default), write Zarr as a single `.zip` file. If False,
+        write a directory store at `zarr_path`.
+    zarr_include_metadata : bool
+        If True and zarr_path is provided, also store per-frame metadata arrays
+        in the Zarr root group:
+          /timestamps  (N,) float64  (seconds from t0)
+          /peaks       (N,) float32
+          /centroids   (N,2) float32
+        and optional root attr 't0' when available.
+    zarr_include_psf : bool
+        If True and zarr_path is provided, also store /psf_frames
+        with shape (N, h, w). This can significantly increase Zarr size.
+    zarr_psf_chunk_t : int
+        Time-axis chunk size for /psf_frames in Zarr when
+        zarr_include_psf=True.
     verbose : bool
     """
     y0, y1, x0, x1 = roi
@@ -219,27 +241,75 @@ def build_ROI_access(
 
         # Open zarr store alongside if requested
         z_dst = None
+        z_root = None
         if zarr_path is not None:
             if not _ZARR_AVAILABLE:
                 raise ImportError(
                     "zarr is required for zarr_path output. "
                     "Install with: pip install zarr")
             compressor = zarr.GZip(level=compression_opts)
-            if zarr_path.endswith('.zip'):
-                store = zarr.ZipStore(zarr_path, mode='w')
+            zarr_target = zarr_path
+            if zarr_zip:
+                if not zarr_target.endswith('.zip'):
+                    zarr_target = zarr_target + '.zip'
+                store = zarr.ZipStore(zarr_target, mode='w')
             else:
-                store = zarr_path
-            z_dst = zarr.open(
-                store, mode='w',
+                store = zarr_target
+            z_root = zarr.open_group(store, mode='w')
+            z_dst = z_root.create_dataset(
+                'roi_access',
                 shape=(roi_h, roi_w, N), dtype='float32',
                 chunks=(1, 1, ct), compressor=compressor,
             )
-            z_dst.attrs['roi']    = [y0, y1, x0, x1]
-            z_dst.attrs['source'] = '/plcam/frames'
+            z_root.attrs['layout'] = 'plred_roi_access_v1'
+            z_root.attrs['roi'] = [y0, y1, x0, x1]
+            z_root.attrs['source'] = '/plcam/frames'
+            z_root.attrs['n_frames'] = int(N)
+            z_root.attrs['plcam_type'] = str(plcam_type)
             z_dst.attrs['layout'] = 'transposed_roi_time_access'
-            z_dst.attrs['n_frames'] = int(N)
+
+            if zarr_include_metadata:
+                ts = f['metadata/timestamps'][:].astype('float64')
+                pk = f['psfcam/peaks'][:].astype('float32')
+                cc = f['psfcam/centroids'][:].astype('float32')
+                z_root.create_dataset(
+                    'timestamps', data=ts,
+                    dtype='float64', chunks=(min(ct, N),), compressor=compressor,
+                )
+                z_root.create_dataset(
+                    'peaks', data=pk,
+                    dtype='float32', chunks=(min(ct, N),), compressor=compressor,
+                )
+                z_root.create_dataset(
+                    'centroids', data=cc,
+                    dtype='float32', chunks=(min(ct, N), 2), compressor=compressor,
+                )
+                if 'metadata/t0' in f:
+                    z_root.attrs['t0'] = float(f['metadata/t0'][()])
+
+            if zarr_include_psf:
+                psf_src = f['psfcam/frames']
+                _, psf_h, psf_w = psf_src.shape
+                ct_psf = max(1, min(int(zarr_psf_chunk_t), N))
+                z_psf = z_root.create_dataset(
+                    'psf_frames',
+                    shape=(N, psf_h, psf_w),
+                    dtype='float32',
+                    chunks=(ct_psf, psf_h, psf_w),
+                    compressor=compressor,
+                )
+                if verbose:
+                    psf_mb = N * psf_h * psf_w * 4 / 1e6
+                    print(
+                        "Including psf_frames in Zarr: shape=(%d,%d,%d), chunks=(%d,%d,%d), "
+                        "raw_size≈%.0f MB" % (N, psf_h, psf_w, ct_psf, psf_h, psf_w, psf_mb)
+                    )
+                for k0 in tqdm(range(0, N, ct_psf), desc='Writing zarr psf_frames', disable=not verbose):
+                    k1 = min(k0 + ct_psf, N)
+                    z_psf[k0:k1] = psf_src[k0:k1].astype('float32')
+
             if verbose:
-                print("Also writing Zarr store: %s" % zarr_path)
+                print("Also writing Zarr store: %s" % zarr_target)
 
         for t0 in tqdm(range(0, N, ct), desc='Building roi_access', disable=not verbose):
             t1 = min(t0 + ct, N)
@@ -249,13 +319,18 @@ def build_ROI_access(
             if z_dst is not None:
                 z_dst[:, :, t0:t1] = transposed
 
-        if z_dst is not None and zarr_path.endswith('.zip'):
+        if z_dst is not None and zarr_zip:
             z_dst.store.close()
 
         if verbose:
             print("roi_access written to '%s'" % out_key)
             if zarr_path is not None:
-                print("Zarr cache written to '%s'" % zarr_path)
+                zarr_final = zarr_path + '.zip' if (zarr_zip and not zarr_path.endswith('.zip')) else zarr_path
+                print("Zarr cache written to '%s'" % zarr_final)
+                if zarr_include_metadata:
+                    print("  included: /timestamps, /peaks, /centroids (+ attr t0 if present)")
+                if zarr_include_psf:
+                    print("  included: /psf_frames")
 
     return out_key
 

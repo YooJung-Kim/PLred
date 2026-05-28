@@ -1,0 +1,1198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PLred ROI Zarr Viewer</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Plus+Jakarta+Sans:wght@400;500;700&display=swap');
+:root {
+  --bg: #f7f3ea;
+  --panel: #fffdf8;
+  --ink: #1f1f1d;
+  --muted: #6f6a62;
+  --line: #d8cfbf;
+  --accent: #0f766e;
+  --accent-2: #9a3412;
+  --ok: #0f766e;
+  --warn: #b45309;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: radial-gradient(1200px 700px at 80% -20%, #f3e8d8 0%, var(--bg) 60%);
+  color: var(--ink);
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+header {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 92%, white);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.brand {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-right: 8px;
+}
+input[type="text"], input[type="number"], textarea {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+}
+button {
+  border: 0;
+  border-radius: 10px;
+  padding: 9px 14px;
+  cursor: pointer;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+}
+button.secondary {
+  background: var(--accent-2);
+}
+button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+#status {
+  margin-left: auto;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  max-width: min(48vw, 720px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+main {
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  height: calc(100vh - 66px);
+}
+aside {
+  border-right: 1px solid var(--line);
+  padding: 14px;
+  background: var(--panel);
+  overflow: auto;
+}
+.section {
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  background: #fff;
+}
+.section h3 {
+  margin: 0 0 10px 0;
+  font-size: 12px;
+  font-family: 'IBM Plex Mono', monospace;
+  color: var(--muted);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.row label {
+  min-width: 88px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.row input[type="number"], .row input[type="text"] {
+  width: 100%;
+}
+.row input[type="range"] {
+  flex: 1;
+}
+.time-range-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+.time-range-track {
+  position: relative;
+  height: 20px;
+  display: flex;
+  align-items: center;
+}
+.time-range-bg {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: #d3c9b8;
+  border-radius: 3px;
+}
+.time-range-fill {
+  position: absolute;
+  height: 4px;
+  background: var(--accent);
+  border-radius: 3px;
+  pointer-events: none;
+}
+.time-range-track input[type="range"] {
+  position: absolute;
+  width: 100%;
+  background: transparent;
+  margin: 0;
+  pointer-events: none;
+}
+.time-range-track input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent-2);
+  box-shadow: 0 0 0 2px #fff;
+  pointer-events: all;
+}
+.time-range-track input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent-2);
+  border: 2px solid #fff;
+  pointer-events: all;
+}
+.time-range-labels {
+  display: flex;
+  justify-content: space-between;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+#tabbar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.tabbtn {
+  background: #e5ddd0;
+  color: #423f39;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.tabbtn.active {
+  background: var(--accent);
+  color: #fff;
+}
+#canvas-wrap {
+  overflow: auto;
+  padding: 18px;
+}
+#frame-tab, #map-tab { display: none; }
+#frame-tab.active, #map-tab.active { display: block; }
+.panel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+}
+.card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 10px;
+}
+.card h4 {
+  margin: 0 0 8px 0;
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  font-family: 'IBM Plex Mono', monospace;
+}
+canvas {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: block;
+  image-rendering: pixelated;
+  width: 100%;
+  height: auto;
+  background: #111;
+}
+#roi-canvas {
+  width: auto;
+  max-width: 100%;
+  margin: 0 auto;
+  cursor: crosshair;
+}
+.roi-viewport {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  max-height: 460px;
+  overflow: auto;
+  padding: 6px;
+  background: #0f0f0f;
+}
+#maps {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+.map-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px;
+  background: #fff;
+}
+.map-title {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.note {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.kv {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">PLred ROI Zarr Viewer</div>
+  <input id="zarr-url" type="text" style="min-width:420px;" placeholder="http://localhost:8000/roi_access.zarr">
+  <button id="load-btn">Load Zarr</button>
+  <button id="zip-btn" class="secondary">Upload .zarr.zip</button>
+  <input id="zip-input" type="file" accept=".zip" style="display:none;">
+  <div id="status">Ready. Load by URL or upload a .zarr.zip file directly.</div>
+</header>
+
+<main>
+  <aside>
+    <div class="section">
+      <h3>Data Summary</h3>
+      <div id="summary" class="kv">No data loaded.</div>
+    </div>
+
+    <div class="section">
+      <h3>Filters</h3>
+      <div class="time-range-wrap" style="margin-bottom:8px;">
+        <div class="time-range-track">
+          <div class="time-range-bg"></div>
+          <div class="time-range-fill" id="time-fill"></div>
+          <input id="time-min-slider" type="range" min="0" max="1000" value="0" step="1">
+          <input id="time-max-slider" type="range" min="0" max="1000" value="1000" step="1">
+        </div>
+        <div class="time-range-labels">
+          <span id="time-slider-min-label">--:--:--</span>
+          <span id="time-slider-max-label">--:--:--</span>
+        </div>
+      </div>
+      <div class="row"><label>Time min</label><input id="time-min" type="number" step="0.1" placeholder="auto"></div>
+      <div class="row"><label>Time max</label><input id="time-max" type="number" step="0.1" placeholder="auto"></div>
+      <div class="row"><label>Strehl min</label><input id="strehl-min" type="number" step="0.01" placeholder="auto"></div>
+      <div class="row"><label>Strehl max</label><input id="strehl-max" type="number" step="0.01" placeholder="auto"></div>
+    </div>
+
+    <div class="section">
+      <h3>Grid</h3>
+      <div class="row"><label>map_n</label><input id="map-n" type="number" value="15" min="2"></div>
+      <div class="row"><label>map_width</label><input id="map-width" type="number" value="3" min="0.1" step="0.1"></div>
+      <div class="row"><label>pix2mas</label><input id="pix2mas" type="number" value="16.2" min="0.001" step="0.1"></div>
+      <div class="row"><label>xc</label><input id="xc" type="number" step="0.01" placeholder="auto"></div>
+      <div class="row"><label>yc</label><input id="yc" type="number" step="0.01" placeholder="auto"></div>
+    </div>
+
+    <div class="section">
+      <h3>Pixel List</h3>
+      <textarea id="pixels" rows="5" style="width:100%;" placeholder="120, 5\n121, 5"></textarea>
+      <div class="note" style="margin-top:8px;">Use global PL pixel coordinates (py, px). Viewer converts to ROI-local coordinates using the stored roi attribute.</div>
+    </div>
+
+    <div class="section">
+      <h3>Actions</h3>
+      <div class="row">
+        <button id="compute-btn" disabled>Compute Maps</button>
+        <button id="frame-btn" class="secondary" disabled>Load Frame Tab</button>
+      </div>
+      <div class="note">Frame tab needs psf_frames in Zarr. ROI image preview is only attempted when ROI is small.</div>
+    </div>
+  </aside>
+
+  <section id="canvas-wrap">
+    <div id="tabbar">
+      <button class="tabbtn active" data-tab="map-tab">Response Maps</button>
+      <button class="tabbtn" data-tab="frame-tab">Frame Browser</button>
+    </div>
+
+    <div id="map-tab" class="active">
+      <div class="panel-grid">
+        <div class="card">
+          <h4>Frames Per Bin</h4>
+          <canvas id="nframes-canvas" width="512" height="512"></canvas>
+        </div>
+      </div>
+      <div style="height:12px;"></div>
+      <div id="maps"></div>
+    </div>
+
+    <div id="frame-tab">
+      <div class="card" style="margin-bottom:10px;">
+        <div class="row" style="margin:0;">
+          <label style="min-width:120px;">Frame Index</label>
+          <input id="frame-slider" type="range" min="0" max="0" value="0" step="1">
+          <span id="frame-label" class="kv">0</span>
+        </div>
+      </div>
+      <div class="panel-grid">
+        <div class="card">
+          <h4>PSF Frame</h4>
+          <canvas id="psf-canvas" width="320" height="320"></canvas>
+        </div>
+        <div class="card">
+          <h4>PL ROI Frame (best effort)</h4>
+          <div class="row" style="margin-bottom:8px;">
+            <label style="min-width:120px;">ROI Zoom</label>
+            <input id="roi-zoom" type="range" min="1" max="12" step="1" value="4">
+            <span id="roi-zoom-val" class="kv">4x</span>
+          </div>
+          <div class="roi-viewport" id="roi-viewport">
+            <canvas id="roi-canvas" width="320" height="320"></canvas>
+          </div>
+          <div id="roi-msg" class="note" style="margin-top:8px;"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script>
+const statusEl = document.getElementById('status');
+const summaryEl = document.getElementById('summary');
+const loadBtn = document.getElementById('load-btn');
+const zipBtn = document.getElementById('zip-btn');
+const zipInput = document.getElementById('zip-input');
+const computeBtn = document.getElementById('compute-btn');
+const frameBtn = document.getElementById('frame-btn');
+const timeMinInput = document.getElementById('time-min');
+const timeMaxInput = document.getElementById('time-max');
+const timeMinSlider = document.getElementById('time-min-slider');
+const timeMaxSlider = document.getElementById('time-max-slider');
+const timeFill = document.getElementById('time-fill');
+const timeSliderMinLabel = document.getElementById('time-slider-min-label');
+const timeSliderMaxLabel = document.getElementById('time-slider-max-label');
+
+let store = null;
+let arrays = {};
+let meta = {};
+let cache = new Map();
+let gridState = null;
+let activeSourceLabel = '';
+let roiClickState = { enabled: false, w: 0, h: 0 };
+
+function setStatus(msg) { statusEl.textContent = msg; }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+function hhmmssToSeconds(s) {
+  const m = s.match(/^(\d{1,2}):(\d{2}):(\d{2}(?:\.\d+)?)$/);
+  if (!m) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  const ss = Number(m[3]);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm) || !Number.isFinite(ss)) return null;
+  if (mm < 0 || mm >= 60 || ss < 0 || ss >= 60) return null;
+  return hh * 3600 + mm * 60 + ss;
+}
+
+function formatClockFromUnix(unixSec) {
+  const d = new Date(unixSec * 1000);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
+}
+
+function formatRelSeconds(sec) {
+  if (!Number.isFinite(sec)) return 'NaN';
+  return sec.toFixed(3);
+}
+
+function formatTimeDisplay(relSec) {
+  if (!Number.isFinite(relSec)) return '--:--:--';
+  if (Number.isFinite(meta.t0)) {
+    return `${formatClockFromUnix(meta.t0 + relSec)}  (+${formatRelSeconds(relSec)}s)`;
+  }
+  return `${formatRelSeconds(relSec)} s`;
+}
+
+function parseTimeInputValue(rawText) {
+  const txt = (rawText || '').trim();
+  if (!txt) return null;
+
+  const asNum = Number(txt);
+  if (Number.isFinite(asNum)) return asNum;
+
+  const hhmmss = hhmmssToSeconds(txt);
+  if (hhmmss === null) return null;
+
+  if (Number.isFinite(meta.t0)) {
+    const t0Clock = (meta.t0 % 86400 + 86400) % 86400;
+    let rel = hhmmss - t0Clock;
+    if (rel < 0) rel += 86400;
+    return rel;
+  }
+  return hhmmss;
+}
+
+function updateTimeSliderFill() {
+  const minV = Number(timeMinSlider.value);
+  const maxV = Number(timeMaxSlider.value);
+  const minBound = Number(timeMinSlider.min);
+  const maxBound = Number(timeMinSlider.max);
+  const span = Math.max(1, maxBound - minBound);
+  const leftPct = ((minV - minBound) / span) * 100;
+  const rightPct = ((maxV - minBound) / span) * 100;
+  timeFill.style.left = `${leftPct}%`;
+  timeFill.style.width = `${Math.max(0, rightPct - leftPct)}%`;
+
+  timeSliderMinLabel.textContent = formatTimeDisplay(minV);
+  timeSliderMaxLabel.textContent = formatTimeDisplay(maxV);
+}
+
+function syncInputsFromSliders() {
+  const minV = Number(timeMinSlider.value);
+  const maxV = Number(timeMaxSlider.value);
+  timeMinInput.value = Number.isFinite(meta.t0) ? formatClockFromUnix(meta.t0 + minV) : minV.toFixed(3);
+  timeMaxInput.value = Number.isFinite(meta.t0) ? formatClockFromUnix(meta.t0 + maxV) : maxV.toFixed(3);
+  updateTimeSliderFill();
+}
+
+function syncSlidersFromInputs() {
+  const rawMin = parseTimeInputValue(timeMinInput.value);
+  const rawMax = parseTimeInputValue(timeMaxInput.value);
+
+  const sMin = Number(timeMinSlider.min);
+  const sMax = Number(timeMinSlider.max);
+
+  let vMin = rawMin === null ? Number(timeMinSlider.value) : clamp(rawMin, sMin, sMax);
+  let vMax = rawMax === null ? Number(timeMaxSlider.value) : clamp(rawMax, sMin, sMax);
+  if (vMin > vMax) {
+    const mid = (vMin + vMax) / 2;
+    vMin = mid;
+    vMax = mid;
+  }
+  timeMinSlider.value = String(vMin);
+  timeMaxSlider.value = String(vMax);
+  updateTimeSliderFill();
+}
+
+function initTimeSlider(minSec, maxSec) {
+  const lo = Math.floor(minSec);
+  const hi = Math.ceil(maxSec);
+  timeMinSlider.min = String(lo);
+  timeMinSlider.max = String(hi);
+  timeMaxSlider.min = String(lo);
+  timeMaxSlider.max = String(hi);
+  timeMinSlider.value = String(lo);
+  timeMaxSlider.value = String(hi);
+  syncInputsFromSliders();
+}
+
+function setCanvasDisplaySize(canvas, w, h, maxW, maxH) {
+  const sx = maxW / Math.max(1, w);
+  const sy = maxH / Math.max(1, h);
+  const s = Math.min(sx, sy, 1);
+  canvas.style.width = `${Math.max(1, Math.floor(w * s))}px`;
+  canvas.style.height = `${Math.max(1, Math.floor(h * s))}px`;
+}
+
+function appendPixelToList(py, px) {
+  const ta = document.getElementById('pixels');
+  const line = `${py}, ${px}`;
+  const existing = ta.value
+    .split(/\n+/)
+    .map(s => s.trim())
+    .filter(Boolean);
+  if (existing.includes(line)) {
+    setStatus(`Pixel (${py}, ${px}) already in list.`);
+    return;
+  }
+  ta.value = existing.length ? `${ta.value.trim()}\n${line}` : line;
+  setStatus(`Added pixel (${py}, ${px}) to response-map list.`);
+}
+
+function getRoiZoomScale() {
+  const s = Number(document.getElementById('roi-zoom').value || 4);
+  return Math.max(1, Math.min(20, s));
+}
+
+function applyRoiZoom(w, h) {
+  const roiCanvas = document.getElementById('roi-canvas');
+  const scale = getRoiZoomScale();
+  roiCanvas.style.width = `${Math.max(1, Math.floor(w * scale))}px`;
+  roiCanvas.style.height = `${Math.max(1, Math.floor(h * scale))}px`;
+  document.getElementById('roi-zoom-val').textContent = `${scale}x`;
+}
+
+function parseDtype(dtype) {
+  const d = dtype.toLowerCase();
+  if (d.includes('f4')) return { kind: 'f4', bytes: 4 };
+  if (d.includes('f8')) return { kind: 'f8', bytes: 8 };
+  if (d.includes('i4')) return { kind: 'i4', bytes: 4 };
+  throw new Error('Unsupported dtype: ' + dtype);
+}
+
+function decodeTyped(bytes, dtype, count) {
+  const info = parseDtype(dtype);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let out;
+  if (info.kind === 'f4') out = new Float32Array(count);
+  else if (info.kind === 'f8') out = new Float64Array(count);
+  else out = new Int32Array(count);
+  const little = true;
+  for (let i = 0; i < count; i++) {
+    const off = i * info.bytes;
+    if (info.kind === 'f4') out[i] = view.getFloat32(off, little);
+    else if (info.kind === 'f8') out[i] = view.getFloat64(off, little);
+    else out[i] = view.getInt32(off, little);
+  }
+  return out;
+}
+
+async function fetchBytes(url) {
+  const r = await fetch(url);
+  if (!r.ok) return null;
+  return new Uint8Array(await r.arrayBuffer());
+}
+
+async function maybeDecompress(bytes, compressor) {
+  if (!compressor || !compressor.id) return bytes;
+  if (compressor.id === 'gzip') {
+    return pako.ungzip(bytes);
+  }
+  throw new Error('Unsupported compressor id: ' + compressor.id);
+}
+
+class ZarrArrayV2 {
+  constructor(source, path, zarray) {
+    this.source = source;
+    this.path = path;
+    this.shape = zarray.shape;
+    this.chunks = zarray.chunks;
+    this.dtype = zarray.dtype;
+    this.order = zarray.order;
+    this.compressor = zarray.compressor;
+    this.separator = zarray.dimension_separator || '.';
+  }
+
+  keyFor(indices) {
+    return indices.join(this.separator);
+  }
+
+  chunkCounts() {
+    return this.shape.map((s, i) => Math.ceil(s / this.chunks[i]));
+  }
+
+  async readChunk(indices) {
+    const key = `${this.path}/${this.keyFor(indices)}`;
+    if (cache.has(key)) return cache.get(key);
+    const raw = await this.source.getBytes(key);
+    if (!raw) throw new Error('Missing chunk: ' + key);
+    const bytes = await maybeDecompress(raw, this.compressor);
+    const chunkShape = this.chunks.map((c, i) => {
+      const start = indices[i] * c;
+      return Math.min(c, this.shape[i] - start);
+    });
+    const count = chunkShape.reduce((a, b) => a * b, 1);
+    const data = decodeTyped(bytes, this.dtype, count);
+    const out = { data, chunkShape };
+    cache.set(key, out);
+    return out;
+  }
+
+  async readAll1D() {
+    const n = this.shape[0];
+    const out = parseDtype(this.dtype).kind === 'f8' ? new Float64Array(n) : new Float32Array(n);
+    const nChunks = Math.ceil(n / this.chunks[0]);
+    let ptr = 0;
+    for (let c = 0; c < nChunks; c++) {
+      const { data, chunkShape } = await this.readChunk([c]);
+      out.set(data.subarray(0, chunkShape[0]), ptr);
+      ptr += chunkShape[0];
+    }
+    return out;
+  }
+
+  async readAll2D() {
+    const [n0, n1] = this.shape;
+    const out = parseDtype(this.dtype).kind === 'f8' ? new Float64Array(n0 * n1) : new Float32Array(n0 * n1);
+    const nChunks0 = Math.ceil(n0 / this.chunks[0]);
+    for (let c0 = 0; c0 < nChunks0; c0++) {
+      const { data, chunkShape } = await this.readChunk([c0, 0]);
+      const rows = chunkShape[0];
+      const cols = chunkShape[1];
+      const baseRow = c0 * this.chunks[0];
+      for (let r = 0; r < rows; r++) {
+        out.set(data.subarray(r * cols, r * cols + cols), (baseRow + r) * n1);
+      }
+    }
+    return out;
+  }
+
+  async readRoiPixelSeries(localY, localX) {
+    const n = this.shape[2];
+    const out = new Float32Array(n);
+    const nChunks = Math.ceil(n / this.chunks[2]);
+    let ptr = 0;
+    for (let ck = 0; ck < nChunks; ck++) {
+      const { data, chunkShape } = await this.readChunk([localY, localX, ck]);
+      out.set(data.subarray(0, chunkShape[2]), ptr);
+      ptr += chunkShape[2];
+    }
+    return out;
+  }
+
+  async readPsfFrame(frameIdx) {
+    const [N, h, w] = this.shape;
+    if (frameIdx < 0 || frameIdx >= N) throw new Error('Frame index out of range');
+    const cT = this.chunks[0];
+    const ck = Math.floor(frameIdx / cT);
+    const local = frameIdx - ck * cT;
+    const { data, chunkShape } = await this.readChunk([ck, 0, 0]);
+    const rows = chunkShape[1], cols = chunkShape[2];
+    const planes = chunkShape[0];
+    if (local >= planes) throw new Error('Frame not in chunk');
+    const out = new Float32Array(rows * cols);
+    const off = local * rows * cols;
+    out.set(data.subarray(off, off + rows * cols));
+    return { data: out, h: rows, w: cols };
+  }
+
+  async readRoiFrame(frameIdx, maxPixels = 6000) {
+    const [h, w, N] = this.shape;
+    if (h * w > maxPixels) {
+      return { tooLarge: true, h, w, maxPixels };
+    }
+    const out = new Float32Array(h * w);
+    const ck = Math.floor(frameIdx / this.chunks[2]);
+    const local = frameIdx - ck * this.chunks[2];
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const { data, chunkShape } = await this.readChunk([y, x, ck]);
+        if (local < chunkShape[2]) out[y * w + x] = data[local];
+      }
+    }
+    return { data: out, h, w };
+  }
+}
+
+function normPath(p) {
+  return p.replace(/^\/+/, '').replace(/\/+/g, '/');
+}
+
+function bytesToJson(bytes) {
+  const txt = new TextDecoder().decode(bytes);
+  return JSON.parse(txt);
+}
+
+class UrlSource {
+  constructor(baseUrl) {
+    this.baseUrl = baseUrl.replace(/\/$/, '');
+  }
+
+  async getBytes(path) {
+    const raw = await fetchBytes(`${this.baseUrl}/${normPath(path)}`);
+    return raw;
+  }
+
+  async getJson(path) {
+    const raw = await this.getBytes(path);
+    if (!raw) return null;
+    return bytesToJson(raw);
+  }
+}
+
+class ZipSource {
+  constructor(entries, rootPrefix) {
+    this.entries = entries;
+    this.rootPrefix = rootPrefix;
+  }
+
+  static async fromFile(file) {
+    const zip = await JSZip.loadAsync(file);
+    const entries = new Map();
+    Object.keys(zip.files).forEach((k) => {
+      if (!zip.files[k].dir) entries.set(normPath(k), zip.files[k]);
+    });
+
+    let rootPrefix = '';
+    if (!entries.has('.zattrs')) {
+      const candidates = [];
+      for (const k of entries.keys()) {
+        if (k.endsWith('/.zattrs')) candidates.push(k.slice(0, -('/.zattrs'.length)));
+      }
+      if (!candidates.length) {
+        throw new Error('No .zattrs found in zip. Expected a .zarr store layout.');
+      }
+      candidates.sort((a, b) => a.length - b.length);
+      rootPrefix = candidates[0];
+    }
+    return new ZipSource(entries, rootPrefix);
+  }
+
+  resolve(path) {
+    const p = normPath(path);
+    return this.rootPrefix ? `${this.rootPrefix}/${p}` : p;
+  }
+
+  async getBytes(path) {
+    const key = this.resolve(path);
+    const file = this.entries.get(key);
+    if (!file) return null;
+    return new Uint8Array(await file.async('uint8array'));
+  }
+
+  async getJson(path) {
+    const raw = await this.getBytes(path);
+    if (!raw) return null;
+    return bytesToJson(raw);
+  }
+}
+
+async function openArray(source, path) {
+  const zarr = await source.getJson(`${path}/.zarray`);
+  if (!zarr) return null;
+  return new ZarrArrayV2(source, path, zarr);
+}
+
+async function loadStoreFromSource(source, sourceLabel) {
+  cache.clear();
+  activeSourceLabel = sourceLabel;
+
+  setStatus('Loading Zarr metadata...');
+  const rootAttrs = await source.getJson('.zattrs') || {};
+
+  const roi = await openArray(source, 'roi_access');
+  if (!roi) throw new Error('roi_access dataset not found');
+
+  const timestamps = await openArray(source, 'timestamps');
+  const peaks = await openArray(source, 'peaks');
+  const centroids = await openArray(source, 'centroids');
+  const psf = await openArray(source, 'psf_frames');
+
+  store = { rootAttrs, sourceLabel };
+  arrays = { roi, timestamps, peaks, centroids, psf };
+
+  setStatus('Reading mandatory arrays...');
+  if (!timestamps || !peaks || !centroids) {
+    throw new Error('Required metadata arrays missing. Need timestamps, peaks, centroids in Zarr.');
+  }
+
+  const ts = await timestamps.readAll1D();
+  const pk = await peaks.readAll1D();
+  const cc = await centroids.readAll2D();
+
+  meta = {
+    timestamps: ts,
+    peaks: pk,
+    centroids: cc,
+    N: ts.length,
+    roi: rootAttrs.roi || [0, roi.shape[0], 0, roi.shape[1]],
+    t0: rootAttrs.t0,
+    hasPsf: Boolean(psf),
+    roiShape: roi.shape,
+    psfShape: psf ? psf.shape : null,
+  };
+
+  summaryEl.textContent = [
+    `N=${meta.N}`,
+    `roi=[${meta.roi.join(', ')}]`,
+    `roi_access shape=[${meta.roiShape.join(', ')}]`,
+    `psf_frames=${meta.hasPsf ? '[' + meta.psfShape.join(', ') + ']' : 'missing'}`,
+    `t0=${meta.t0 ?? 'n/a'}`,
+  ].join('\n');
+
+  const tMin = Math.min(...meta.timestamps);
+  const tMax = Math.max(...meta.timestamps);
+  timeMinInput.placeholder = Number.isFinite(meta.t0) ? formatClockFromUnix(meta.t0 + tMin) : String(tMin.toFixed(3));
+  timeMaxInput.placeholder = Number.isFinite(meta.t0) ? formatClockFromUnix(meta.t0 + tMax) : String(tMax.toFixed(3));
+  document.getElementById('strehl-min').placeholder = String(Math.min(...meta.peaks).toFixed(3));
+  document.getElementById('strehl-max').placeholder = String(Math.max(...meta.peaks).toFixed(3));
+  initTimeSlider(tMin, tMax);
+
+  computeBtn.disabled = false;
+  frameBtn.disabled = !meta.hasPsf;
+  setStatus(`Loaded from ${activeSourceLabel}. Configure filters/grid and click Compute Maps.`);
+}
+
+async function loadStoreFromUrl() {
+  const raw = document.getElementById('zarr-url').value.trim();
+  if (!raw) throw new Error('Please enter a Zarr URL');
+  const source = new UrlSource(raw);
+  await loadStoreFromSource(source, raw);
+}
+
+async function loadStoreFromZipFile(file) {
+  const source = await ZipSource.fromFile(file);
+  await loadStoreFromSource(source, file.name);
+}
+
+function readNum(id) {
+  const v = document.getElementById(id).value.trim();
+  if (!v) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parsePixels() {
+  const text = document.getElementById('pixels').value.trim();
+  if (!text) return [];
+  const out = [];
+  for (const line of text.split(/\n+/)) {
+    const m = line.split(',').map(s => s.trim()).filter(Boolean);
+    if (m.length !== 2) continue;
+    const py = Number(m[0]), px = Number(m[1]);
+    if (Number.isInteger(py) && Number.isInteger(px)) out.push([py, px]);
+  }
+  return out;
+}
+
+function computeMask() {
+  const tMinParsed = parseTimeInputValue(timeMinInput.value);
+  const tMaxParsed = parseTimeInputValue(timeMaxInput.value);
+  const tMin = tMinParsed !== null ? tMinParsed : Number(timeMinSlider.value);
+  const tMax = tMaxParsed !== null ? tMaxParsed : Number(timeMaxSlider.value);
+  const sMin = readNum('strehl-min');
+  const sMax = readNum('strehl-max');
+
+  const mask = new Uint8Array(meta.N);
+  let nKept = 0;
+  for (let i = 0; i < meta.N; i++) {
+    const t = meta.timestamps[i];
+    const p = meta.peaks[i];
+    let ok = true;
+    if (tMin !== null) ok = ok && t >= tMin;
+    if (tMax !== null) ok = ok && t <= tMax;
+    if (sMin !== null) ok = ok && p >= sMin;
+    if (sMax !== null) ok = ok && p <= sMax;
+    if (ok) { mask[i] = 1; nKept++; }
+  }
+  return { mask, nKept };
+}
+
+function buildGrid(mask) {
+  const mapN = Math.max(2, Number(readNum('map-n') || 15));
+  const mapWidth = Number(readNum('map-width') || 3);
+  const pix2mas = Number(readNum('pix2mas') || 16.2);
+
+  const xs = [];
+  const ys = [];
+  for (let i = 0; i < meta.N; i++) {
+    if (!mask[i]) continue;
+    xs.push(meta.centroids[i * 2]);
+    ys.push(meta.centroids[i * 2 + 1]);
+  }
+  if (!xs.length) throw new Error('No frames pass current filters.');
+
+  xs.sort((a, b) => a - b);
+  ys.sort((a, b) => a - b);
+  const med = arr => arr[Math.floor(arr.length / 2)];
+  const xc = readNum('xc') ?? med(xs);
+  const yc = readNum('yc') ?? med(ys);
+
+  const x0 = xc - mapWidth / 2;
+  const y0 = yc - mapWidth / 2;
+  const dx = mapWidth / mapN;
+  const dy = mapWidth / mapN;
+
+  const xi = new Int32Array(meta.N);
+  const yi = new Int32Array(meta.N);
+  xi.fill(-1); yi.fill(-1);
+
+  const nframes = new Int32Array(mapN * mapN);
+  const frameBins = new Int32Array(meta.N);
+  frameBins.fill(-1);
+
+  for (let i = 0; i < meta.N; i++) {
+    if (!mask[i]) continue;
+    const x = meta.centroids[i * 2];
+    const y = meta.centroids[i * 2 + 1];
+    const ix = Math.floor((x - x0) / dx);
+    const iy = Math.floor((y - y0) / dy);
+    if (ix < 0 || ix >= mapN || iy < 0 || iy >= mapN) continue;
+    xi[i] = ix;
+    yi[i] = iy;
+    frameBins[i] = iy * mapN + ix;
+    nframes[iy * mapN + ix] += 1;
+  }
+
+  return { mapN, mapWidth, pix2mas, xc, yc, x0, y0, dx, dy, xi, yi, nframes, frameBins };
+}
+
+function drawHeat(canvas, data, w, h) {
+  const ctx = canvas.getContext('2d');
+  canvas.width = Math.max(1, w);
+  canvas.height = Math.max(1, h);
+  const img = ctx.createImageData(w, h);
+
+  let vmin = Infinity, vmax = -Infinity;
+  for (let i = 0; i < data.length; i++) {
+    const v = data[i];
+    if (!Number.isFinite(v)) continue;
+    if (v < vmin) vmin = v;
+    if (v > vmax) vmax = v;
+  }
+  if (!Number.isFinite(vmin) || !Number.isFinite(vmax) || vmin === vmax) {
+    vmin = 0; vmax = 1;
+  }
+
+  for (let i = 0; i < data.length; i++) {
+    const v = data[i];
+    const t = Number.isFinite(v) ? clamp((v - vmin) / (vmax - vmin + 1e-30), 0, 1) : 0;
+    const r = Math.floor(255 * t);
+    const g = Math.floor(255 * (1 - Math.abs(t - 0.5) * 2));
+    const b = Math.floor(255 * (1 - t));
+    img.data[i * 4 + 0] = r;
+    img.data[i * 4 + 1] = g;
+    img.data[i * 4 + 2] = b;
+    img.data[i * 4 + 3] = Number.isFinite(v) ? 255 : 70;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+async function computeMaps() {
+  if (!store) return;
+  setStatus('Computing response maps...');
+
+  const { mask, nKept } = computeMask();
+  const grid = buildGrid(mask);
+  gridState = { mask, ...grid };
+
+  drawHeat(document.getElementById('nframes-canvas'), grid.nframes, grid.mapN, grid.mapN);
+
+  const mapsEl = document.getElementById('maps');
+  mapsEl.innerHTML = '';
+
+  const [ry0, ry1, rx0, rx1] = meta.roi;
+  const pixels = parsePixels();
+
+  for (const [py, px] of pixels) {
+    if (!(py >= ry0 && py < ry1 && px >= rx0 && px < rx1)) {
+      const card = document.createElement('div');
+      card.className = 'map-card';
+      card.innerHTML = `<div class="map-title">pixel (${py}, ${px})</div><div class="note">Outside ROI [${ry0},${ry1}) x [${rx0},${rx1})</div>`;
+      mapsEl.appendChild(card);
+      continue;
+    }
+
+    const ly = py - ry0;
+    const lx = px - rx0;
+    const series = await arrays.roi.readRoiPixelSeries(ly, lx);
+    const acc = new Float64Array(grid.mapN * grid.mapN);
+    const cnt = new Int32Array(grid.mapN * grid.mapN);
+
+    for (let i = 0; i < meta.N; i++) {
+      if (!mask[i]) continue;
+      const b = grid.frameBins[i];
+      if (b < 0) continue;
+      const v = series[i];
+      if (!Number.isFinite(v)) continue;
+      acc[b] += v;
+      cnt[b] += 1;
+    }
+
+    const pmap = new Float32Array(grid.mapN * grid.mapN);
+    for (let i = 0; i < pmap.length; i++) {
+      pmap[i] = cnt[i] > 0 ? acc[i] / cnt[i] : NaN;
+    }
+
+    const card = document.createElement('div');
+    card.className = 'map-card';
+    const title = document.createElement('div');
+    title.className = 'map-title';
+    title.textContent = `pixel (${py}, ${px})`; 
+    const cv = document.createElement('canvas');
+    cv.width = 260; cv.height = 260;
+    drawHeat(cv, pmap, grid.mapN, grid.mapN);
+    card.appendChild(title);
+    card.appendChild(cv);
+    mapsEl.appendChild(card);
+  }
+
+  setStatus(`Computed maps. kept=${nKept}/${meta.N}, filled_bins=${grid.nframes.filter(v => v > 0).length}/${grid.mapN * grid.mapN}`);
+}
+
+async function loadFrameTab() {
+  if (!meta.hasPsf) return;
+  const slider = document.getElementById('frame-slider');
+  const label = document.getElementById('frame-label');
+  slider.min = 0;
+  slider.max = String(meta.N - 1);
+  slider.value = '0';
+
+  async function drawFrame(k) {
+    label.textContent = String(k);
+
+    const psf = await arrays.psf.readPsfFrame(k);
+    drawHeat(document.getElementById('psf-canvas'), psf.data, psf.w, psf.h);
+    setCanvasDisplaySize(document.getElementById('psf-canvas'), psf.w, psf.h, 360, 260);
+
+    const roiMsg = document.getElementById('roi-msg');
+    const roiCanvas = document.getElementById('roi-canvas');
+    const roiRes = await arrays.roi.readRoiFrame(k, 6000);
+    if (roiRes.tooLarge) {
+      roiMsg.textContent = `ROI is ${roiRes.h}x${roiRes.w}. Frame reconstruction is disabled above ${roiRes.maxPixels} pixels.`;
+      const blank = new Float32Array(16 * 16);
+      blank.fill(NaN);
+      drawHeat(roiCanvas, blank, 16, 16);
+      applyRoiZoom(16, 16);
+      roiClickState = { enabled: false, w: 16, h: 16 };
+    } else {
+      const [ry0, ry1, rx0, rx1] = meta.roi;
+      roiMsg.textContent = `Reconstructed ROI frame at t_index=${k}. Click to add a pixel to the map list. Global ROI bounds: y:[${ry0},${ry1}) x:[${rx0},${rx1}).`;
+      drawHeat(roiCanvas, roiRes.data, roiRes.w, roiRes.h);
+      applyRoiZoom(roiRes.w, roiRes.h);
+      roiClickState = { enabled: true, w: roiRes.w, h: roiRes.h };
+    }
+  }
+
+  slider.oninput = async (e) => {
+    const k = Number(e.target.value);
+    setStatus(`Loading frame ${k}...`);
+    await drawFrame(k);
+    setStatus(`Frame ${k} loaded.`);
+  };
+
+  setStatus('Loading frame tab...');
+  await drawFrame(0);
+  setStatus('Frame tab ready.');
+}
+
+function setupRoiCanvasClick() {
+  const roiCanvas = document.getElementById('roi-canvas');
+  roiCanvas.addEventListener('click', (ev) => {
+    if (!roiClickState.enabled) return;
+    const rect = roiCanvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+
+    const lx = Math.floor(((ev.clientX - rect.left) / rect.width) * roiClickState.w);
+    const ly = Math.floor(((ev.clientY - rect.top) / rect.height) * roiClickState.h);
+
+    if (lx < 0 || ly < 0 || lx >= roiClickState.w || ly >= roiClickState.h) return;
+
+    const [ry0, , rx0] = meta.roi;
+    const py = ry0 + ly;
+    const px = rx0 + lx;
+    appendPixelToList(py, px);
+  });
+
+  const roiZoom = document.getElementById('roi-zoom');
+  roiZoom.addEventListener('input', () => {
+    if (!roiClickState.w || !roiClickState.h) return;
+    applyRoiZoom(roiClickState.w, roiClickState.h);
+  });
+}
+
+function setupTabs() {
+  document.querySelectorAll('.tabbtn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tabbtn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const tab = btn.dataset.tab;
+      document.getElementById('map-tab').classList.toggle('active', tab === 'map-tab');
+      document.getElementById('frame-tab').classList.toggle('active', tab === 'frame-tab');
+    });
+  });
+}
+
+loadBtn.addEventListener('click', async () => {
+  try {
+    loadBtn.disabled = true;
+    await loadStoreFromUrl();
+  } catch (err) {
+    setStatus('Load error: ' + err.message);
+  } finally {
+    loadBtn.disabled = false;
+  }
+});
+
+timeMinSlider.addEventListener('input', () => {
+  const minV = Number(timeMinSlider.value);
+  const maxV = Number(timeMaxSlider.value);
+  if (minV > maxV) timeMaxSlider.value = String(minV);
+  syncInputsFromSliders();
+});
+
+timeMaxSlider.addEventListener('input', () => {
+  const minV = Number(timeMinSlider.value);
+  const maxV = Number(timeMaxSlider.value);
+  if (maxV < minV) timeMinSlider.value = String(maxV);
+  syncInputsFromSliders();
+});
+
+timeMinInput.addEventListener('change', syncSlidersFromInputs);
+timeMaxInput.addEventListener('change', syncSlidersFromInputs);
+
+zipBtn.addEventListener('click', () => {
+  zipInput.value = '';
+  zipInput.click();
+});
+
+zipInput.addEventListener('change', async (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  try {
+    zipBtn.disabled = true;
+    setStatus(`Reading zip: ${file.name}...`);
+    await loadStoreFromZipFile(file);
+  } catch (err) {
+    setStatus('Zip load error: ' + err.message);
+  } finally {
+    zipBtn.disabled = false;
+  }
+});
+
+computeBtn.addEventListener('click', async () => {
+  try {
+    computeBtn.disabled = true;
+    await computeMaps();
+  } catch (err) {
+    setStatus('Compute error: ' + err.message);
+  } finally {
+    computeBtn.disabled = false;
+  }
+});
+
+frameBtn.addEventListener('click', async () => {
+  try {
+    frameBtn.disabled = true;
+    await loadFrameTab();
+    document.querySelector('.tabbtn[data-tab="frame-tab"]').click();
+  } catch (err) {
+    setStatus('Frame error: ' + err.message);
+  } finally {
+    frameBtn.disabled = false;
+  }
+});
+
+setupTabs();
+setupRoiCanvasClick();
+</script>
+</body>
+</html>
