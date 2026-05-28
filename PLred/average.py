@@ -327,18 +327,24 @@ def build_ROI_access(
                 ts = f['metadata/timestamps'][:].astype('float64')
                 pk = f['psfcam/peaks'][:].astype('float32')
                 cc = f['psfcam/centroids'][:].astype('float32')
-                z_root.create_dataset(
-                    'timestamps', data=ts,
+                z_ts = z_root.create_dataset(
+                    'timestamps',
+                    shape=ts.shape,
                     dtype='float64', chunks=(min(ct, N),), compressor=compressor,
                 )
-                z_root.create_dataset(
-                    'peaks', data=pk,
+                z_pk = z_root.create_dataset(
+                    'peaks',
+                    shape=pk.shape,
                     dtype='float32', chunks=(min(ct, N),), compressor=compressor,
                 )
-                z_root.create_dataset(
-                    'centroids', data=cc,
+                z_cc = z_root.create_dataset(
+                    'centroids',
+                    shape=cc.shape,
                     dtype='float32', chunks=(min(ct, N), 2), compressor=compressor,
                 )
+                z_ts[:] = ts
+                z_pk[:] = pk
+                z_cc[:] = cc
                 if 'metadata/t0' in f:
                     z_root.attrs['t0'] = float(f['metadata/t0'][()])
 
