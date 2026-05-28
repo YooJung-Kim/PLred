@@ -293,6 +293,93 @@ def script_match_timestamps(
     intermediate_h5_path = os.path.join(outname, f'{filename}_intermediate.h5')
     from .h5_consolidation import write_intermediate_matched_h5
 
+
+    # ======== Load and compute weighted-mean PSF frames ========
+    # For each matched PL frame, compute weighted mean of all contributing PSF frames
+    crop_width = int(config['Options'].get('crop_width', 20))
+    fastcam_fits_files = [f.replace('.txt', '.fits') for f in fastcam_timestampfiles]
+    
+    # Load all needed FITS files only once
+    fits_cache = {}
+    
+    weighted_psf_frames = []
+    nstacks = []  # Total weight per matched frame
+    
+    for slowcam_idx in tqdm(sorted(Dict.keys()), desc='Computing weighted PSF frames', disable=not verbose):
+        fastcam_dict = Dict[slowcam_idx]
+        
+        # Get frame shape from first frame
+        if len(fastcam_dict) == 0:
+            continue
+            
+        first_idx = list(fastcam_dict.keys())[0]
+        first_file_idx = fastcam_fileinds[first_idx]
+        first_fits_path = fastcam_fits_files[first_file_idx]
+        if first_file_idx not in fits_cache:
+            if os.path.exists(first_fits_path):
+                fits_cache[first_file_idx] = fits.getdata(first_fits_path)
+            else:
+                alt_path = os.path.join(fastcam_dir, os.path.basename(first_fits_path))
+                fits_cache[first_file_idx] = fits.getdata(alt_path)
+        temp_data = fits_cache[first_file_idx]
+        if temp_data.ndim == 3:
+            temp_frame = temp_data[0]
+        else:
+            temp_frame = temp_data
+        
+        # Determine crop size
+        h, w = temp_frame.shape
+        cx, cy = w // 2, h // 2
+        hw = crop_width // 2
+        crop_h = min(crop_width, h)
+        crop_w = min(crop_width, w)
+        
+        # Accumulate weighted frames
+        frame_acc = np.zeros((crop_h, crop_w), dtype='float64')
+        w_total = 0.0
+        
+        for fastcam_idx, weight in fastcam_dict.items():
+            if weight <= 0:
+                continue
+            
+            file_idx = fastcam_fileinds[fastcam_idx]
+            frame_idx = fastcam_frameinds[fastcam_idx]
+            fits_path = fastcam_fits_files[file_idx]
+            
+            # Load FITS file if not cached
+            if file_idx not in fits_cache:
+                if os.path.exists(fits_path):
+                    fits_cache[file_idx] = fits.getdata(fits_path)
+                else:
+                    alt_path = os.path.join(fastcam_dir, os.path.basename(fits_path))
+                    fits_cache[file_idx] = fits.getdata(alt_path)
+            
+            data = fits_cache[file_idx]
+            if data.ndim == 3:
+                frame = data[frame_idx]
+            else:
+                frame = data
+            
+            # Crop center
+            cropped = frame[max(0, cy-hw):cy+hw, max(0, cx-hw):cx+hw]
+            frame_acc += weight * cropped.astype('float64')
+            w_total += weight
+        
+        # Compute weighted mean
+        if w_total > 0:
+            weighted_frame = (frame_acc / w_total).astype('float32')
+        else:
+            weighted_frame = frame_acc.astype('float32')
+        
+        weighted_psf_frames.append(weighted_frame)
+        nstacks.append(w_total)
+    
+    if len(weighted_psf_frames) > 0:
+        weighted_psf_frames = np.array(weighted_psf_frames, dtype='float32')
+    else:
+        weighted_psf_frames = np.array([], dtype='float32')
+    nstacks = np.array(nstacks, dtype='float32')
+
     write_intermediate_matched_h5(
         intermediate_h5_path,
         fastcam_timestamps,
@@ -306,6 +393,8 @@ def script_match_timestamps(
         Dict,
         matched_timestamps,
         config_dict,
+        weighted_psf_frames=weighted_psf_frames,
+        nstacks=nstacks,
         verbose=verbose,
     )
 

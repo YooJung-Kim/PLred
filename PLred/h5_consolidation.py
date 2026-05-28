@@ -48,13 +48,15 @@ def write_intermediate_matched_h5(
     Dict,
     matched_timestamps,
     config_dict,
+    weighted_psf_frames=None,
+    nstacks=None,
     verbose=False,
 ):
     """
     Write intermediate H5 file for Layer 1 (timestamp matching results).
 
-    This file contains the raw matching data and timestamps, allowing Layer 2
-    to load frames and compute centroids without re-doing the matching.
+    This file contains the weighted-mean PSF frames (one per matched PL frame),
+    matching data, and timestamps, allowing Layer 2 to use pre-computed frames.
 
     Parameters
     ----------
@@ -83,6 +85,10 @@ def write_intermediate_matched_h5(
         Timestamps for matched slowcam frames
     config_dict : dict
         Configuration and observation metadata
+    weighted_psf_frames : ndarray float32, shape (K, H, W), optional
+        Weighted-mean PSF frames (one per matched slowcam frame)
+    nstacks : ndarray float32, shape (K,), optional
+        Total weight per matched frame (for quality assessment)
     verbose : bool, optional
         Print progress
 
@@ -109,6 +115,13 @@ def write_intermediate_matched_h5(
         psf_grp.create_dataset('frame_indices', data=fastcam_frameinds, dtype='int64')
         psf_grp.create_dataset('timestamp_files', data=json.dumps(list(fastcam_timestampfiles)))
         psf_grp.attrs['num_frames'] = len(fastcam_timestamps)
+
+        # Store weighted PSF frames if provided (one frame per matched slowcam frame)
+        if weighted_psf_frames is not None and len(weighted_psf_frames) > 0:
+            psf_grp.create_dataset('weighted_frames', data=weighted_psf_frames, dtype='float32', compression='gzip')
+        
+        if nstacks is not None and len(nstacks) > 0:
+            psf_grp.create_dataset('nstacks', data=nstacks, dtype='float32')
 
         # --- PL camera matching data ---
         pl_grp = h5f.create_group('plcam_matching')
@@ -194,6 +207,14 @@ def read_intermediate_matched_h5(h5_path, verbose=False):
             for slowcam_idx, fastcam_dict in matching_dict_str.items()
         }
 
+        # Read weighted frames and nstacks if available
+        weighted_frames = None
+        nstacks = None
+        if 'weighted_frames' in h5f['psfcam_matching']:
+            weighted_frames = h5f['psfcam_matching']['weighted_frames'][:]
+        if 'nstacks' in h5f['psfcam_matching']:
+            nstacks = h5f['psfcam_matching']['nstacks'][:]
+
     data = {
         'fastcam_timestamps': fastcam_timestamps,
         'fastcam_fileinds': fastcam_fileinds,
@@ -206,6 +227,8 @@ def read_intermediate_matched_h5(h5_path, verbose=False):
         'matched_timestamps': matched_timestamps,
         'matching_dict': matching_dict,
         'config_dict': config_dict,
+        'weighted_frames': weighted_frames,
+        'nstacks': nstacks,
     }
 
     if verbose:
