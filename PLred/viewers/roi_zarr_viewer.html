@@ -275,10 +275,10 @@ canvas {
 <header>
   <div class="brand">PLred ROI Zarr Viewer</div>
   <input id="zarr-url" type="text" style="min-width:420px;" placeholder="http://localhost:8000/timestamp_matching_output/roi_access.zarr.zip">
-  <button id="load-btn">Load .zarr.zip URL</button>
+  <button id="load-btn">Load Zarr URL</button>
   <button id="zip-btn" class="secondary">Upload .zarr.zip</button>
   <input id="zip-input" type="file" accept=".zip" style="display:none;">
-  <div id="status">Ready. Load a .zarr.zip by URL or upload one directly.</div>
+  <div id="status">Ready. Load a .zarr or .zarr.zip by URL, or upload a .zarr.zip directly.</div>
 </header>
 
 <main>
@@ -856,10 +856,9 @@ async function loadStoreFromSource(source, sourceLabel) {
 async function loadStoreFromUrl() {
   const raw = document.getElementById('zarr-url').value.trim();
   if (!raw) throw new Error('Please enter a Zarr URL');
-  if (!/\.zip(?:$|[?#])/i.test(raw)) {
-    throw new Error('URL must point to a .zarr.zip file');
-  }
-  const source = await ZipSource.fromUrl(raw);
+  const source = /\.zip(?:$|[?#])/i.test(raw)
+    ? await ZipSource.fromUrl(raw)
+    : new UrlSource(raw);
   await loadStoreFromSource(source, raw);
 }
 
