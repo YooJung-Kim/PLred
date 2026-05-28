@@ -98,6 +98,20 @@ def _open_zarr_store(zarr_target, zarr_zip):
     )
 
 
+def _open_zarr_group_for_writing(store):
+    """Open a writable Zarr group in a version-compatible way.
+
+    Prefer Zarr v2 output because numcodecs-style compressors are widely
+    compatible and expected by the downstream HTML workflow.
+    """
+    # zarr>=3 supports explicit zarr_format, which we force to v2 here.
+    try:
+        return zarr.open_group(store, mode='w', zarr_format=2)
+    except TypeError:
+        # Older zarr versions don't expose zarr_format; default behavior is fine.
+        return zarr.open_group(store, mode='w')
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -296,7 +310,7 @@ def build_ROI_access(
                 if not zarr_target.endswith('.zip'):
                     zarr_target = zarr_target + '.zip'
             z_store = _open_zarr_store(zarr_target, zarr_zip)
-            z_root = zarr.open_group(z_store, mode='w')
+            z_root = _open_zarr_group_for_writing(z_store)
             z_dst = z_root.create_dataset(
                 'roi_access',
                 shape=(roi_h, roi_w, N), dtype='float32',
