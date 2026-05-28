@@ -56,6 +56,29 @@ except ImportError:
     _ZARR_AVAILABLE = False
 
 
+def _make_zarr_gzip(level):
+    """Return a gzip compressor compatible with installed zarr version(s)."""
+    # Preferred path (works with common zarr + numcodecs setups)
+    try:
+        from numcodecs import GZip as _NumcodecsGZip
+        return _NumcodecsGZip(level=level)
+    except Exception:
+        pass
+
+    # Older zarr exposed GZip directly
+    if _ZARR_AVAILABLE and hasattr(zarr, 'GZip'):
+        return zarr.GZip(level=level)
+
+    # Newer zarr may expose codecs namespace
+    if _ZARR_AVAILABLE and hasattr(zarr, 'codecs') and hasattr(zarr.codecs, 'GzipCodec'):
+        return zarr.codecs.GzipCodec(level=level)
+
+    raise ImportError(
+        "Could not construct a gzip compressor for zarr. "
+        "Install numcodecs (recommended): pip install numcodecs"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -247,7 +270,7 @@ def build_ROI_access(
                 raise ImportError(
                     "zarr is required for zarr_path output. "
                     "Install with: pip install zarr")
-            compressor = zarr.GZip(level=compression_opts)
+            compressor = _make_zarr_gzip(level=compression_opts)
             zarr_target = zarr_path
             if zarr_zip:
                 if not zarr_target.endswith('.zip'):
