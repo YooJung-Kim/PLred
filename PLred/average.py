@@ -26,6 +26,18 @@ averaged.h5
               OR      (map_n, map_n, Nlambda, Nport) for spectra mode
   /bootstrap/
     avg_PLcam float32 (n_bootstrap, map_n, map_n, ny, nx)  [if n_bootstrap > 0]
+
+Timestamp convention
+--------------------
+Timestamps in the giant H5 (/metadata/timestamps) are stored as **relative seconds
+from the first frame** so they start at 0.  The absolute Unix timestamp of the first
+frame is stored as /metadata/t0 (float64) and as f.attrs['t0'].
+
+Use relative times when calling explore_grid() and average_to_h5():
+    time_min=10.0, time_max=60.0   →  frames 10–60 s after observation start
+
+To recover the absolute time of any frame:
+    abs_time = t0 + timestamps[i]
 """
 
 import numpy as np
@@ -49,13 +61,15 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 def _load_giant_meta(giant_h5):
-    """Read centroids, peaks, timestamps from the giant H5. Fast."""
+    """Read centroids, peaks, relative timestamps (seconds from t0), t0, and plcam_type."""
     with h5py.File(giant_h5, 'r') as f:
-        centroids  = f['psfcam/centroids'][:]   # (N, 2)
-        peaks      = f['psfcam/peaks'][:]        # (N,)
-        timestamps = f['metadata/timestamps'][:] # (N,)
+        centroids  = f['psfcam/centroids'][:]    # (N, 2)
+        peaks      = f['psfcam/peaks'][:]         # (N,)
+        timestamps = f['metadata/timestamps'][:]  # (N,) seconds from t0
         plcam_type = f.attrs.get('plcam_type', 'raw')
-    return centroids, peaks, timestamps, plcam_type
+        # t0 may be absent in older giant H5 files — fall back gracefully
+        t0 = float(f['metadata/t0'][()]) if 'metadata/t0' in f else None
+    return centroids, peaks, timestamps, plcam_type, t0
 
 
 def _build_grid(centroids, map_n, map_width, xc, yc, pix2mas):
@@ -301,8 +315,17 @@ def explore_grid(
         avg_psf_map    — float32 (map_n, map_n, h, w) or None
         pixel_maps     — {(py, px): float32 (map_n, map_n)} or {}
     """
-    centroids, peaks, timestamps, plcam_type = _load_giant_meta(giant_h5)
+    centroids, peaks, timestamps, plcam_type, t0 = _load_giant_meta(giant_h5)
     N = len(timestamps)
+
+    if t0 is not None:
+        from datetime import datetime as _dt
+        print("Observation start (t0): %s  (Unix %.3f)" % (
+            _dt.utcfromtimestamp(t0).strftime('%Y-%m-%d %H:%M:%S UTC'), t0))
+        print("timestamps are relative seconds from t0  "
+              "[0.0, %.3f]" % float(timestamps[-1]))
+    else:
+        print("timestamps: [%.3f, %.3f]" % (float(timestamps[0]), float(timestamps[-1])))
 
     # Filter
     filt_mask = _apply_filter(peaks, timestamps, strehl_min, strehl_max, time_min, time_max)
@@ -418,6 +441,7 @@ def explore_grid(
         'nframes_map': nframes_map,
         'avg_psf_map': avg_psf_map,
         'pixel_maps': pixel_maps,
+        't0': t0,   # absolute Unix timestamp of first frame; timestamps are seconds from t0
     }
 
 
@@ -511,7 +535,7 @@ def average_to_h5(
     -------
     str or list of str  — output path(s)
     """
-    centroids, peaks, timestamps, plcam_type = _load_giant_meta(giant_h5)
+    centroids, peaks, timestamps, plcam_type, t0 = _load_giant_meta(giant_h5)
 
     filt_mask = _apply_filter(peaks, timestamps, strehl_min, strehl_max, time_min, time_max)
     filt_indices = np.where(filt_mask)[0]
@@ -520,14 +544,14 @@ def average_to_h5(
         return _average_chunked(
             giant_h5, outpath, map_n, map_width, xc, yc,
             pix2mas, n_bootstrap, time_chunk_minutes,
-            centroids, peaks, timestamps, plcam_type,
+            centroids, peaks, timestamps, plcam_type, t0,
             filt_mask, filt_indices,
             strehl_min, strehl_max, time_min, time_max, verbose,
         )
 
     return _average_one(
         giant_h5, outpath, map_n, map_width, xc, yc, pix2mas, n_bootstrap,
-        centroids, peaks, timestamps, plcam_type,
+        centroids, peaks, timestamps, plcam_type, t0,
         filt_mask, filt_indices,
         strehl_min, strehl_max, time_min, time_max, verbose,
     )
@@ -535,7 +559,7 @@ def average_to_h5(
 
 def _average_one(
     giant_h5, outpath, map_n, map_width, xc, yc, pix2mas, n_bootstrap,
-    centroids, peaks, timestamps, plcam_type,
+    centroids, peaks, timestamps, plcam_type, t0,
     filt_mask, filt_indices,
     strehl_min, strehl_max, time_min, time_max, verbose,
 ):
@@ -624,7 +648,7 @@ def _average_one(
 
     # Write output
     _write_averaged_h5(
-        outpath, map_n, map_width, xc, yc, pix2mas, plcam_type,
+        outpath, map_n, map_width, xc, yc, pix2mas, plcam_type, t0,
         xbins, ybins, x_mas, y_mas, nframes, ts_lists,
         avg_psf.astype('float32'), avg_pl.astype('float32'),
         boot_avg_pl,
@@ -636,7 +660,7 @@ def _average_one(
 def _average_chunked(
     giant_h5, outpath, map_n, map_width, xc, yc, pix2mas, n_bootstrap,
     time_chunk_minutes,
-    centroids, peaks, timestamps, plcam_type,
+    centroids, peaks, timestamps, plcam_type, t0,
     filt_mask, filt_indices,
     strehl_min, strehl_max, time_min, time_max, verbose,
 ):
@@ -681,7 +705,7 @@ def _average_chunked(
 
         _average_one(
             giant_h5, chunk_path, map_n, map_width, _xc, _yc, pix2mas, n_bootstrap,
-            centroids, peaks, timestamps, plcam_type,
+            centroids, peaks, timestamps, plcam_type, t0,
             chunk_mask_full, chunk_inds,
             strehl_min, strehl_max, chunk_t0, chunk_t1, verbose,
         )
@@ -691,7 +715,7 @@ def _average_chunked(
 
 
 def _write_averaged_h5(
-    outpath, map_n, map_width, xc, yc, pix2mas, plcam_type,
+    outpath, map_n, map_width, xc, yc, pix2mas, plcam_type, t0,
     xbins, ybins, x_mas, y_mas, nframes, ts_lists,
     avg_psf, avg_pl, boot_avg_pl,
     strehl_min, strehl_max, time_min, time_max, n_bootstrap,
@@ -703,6 +727,7 @@ def _write_averaged_h5(
         'strehl_min': strehl_min, 'strehl_max': strehl_max,
         'time_min': time_min, 'time_max': time_max,
         'n_bootstrap': n_bootstrap,
+        't0': t0,
         'write_time': datetime.now().isoformat(),
     }
     with h5py.File(outpath, 'w') as f:
@@ -712,6 +737,8 @@ def _write_averaged_h5(
         f.attrs['yc']         = yc
         f.attrs['pix2mas']    = pix2mas
         f.attrs['plcam_type'] = plcam_type
+        if t0 is not None:
+            f.attrs['t0'] = t0   # absolute Unix timestamp of first frame
 
         meta = f.create_group('metadata')
         meta.create_dataset('config',  data=json.dumps(config))
@@ -721,6 +748,9 @@ def _write_averaged_h5(
         meta.create_dataset('y_mas',   data=y_mas,   dtype='float64')
         meta.create_dataset('nframes', data=nframes, dtype='int32')
         meta.create_dataset('timestamps', data=json.dumps(ts_lists))
+        # bin-level timestamps are also relative seconds from t0
+        if t0 is not None:
+            meta.create_dataset('t0', data=t0, dtype='float64')
 
         f.create_dataset('avg_PSFcam', data=avg_psf, dtype='float32',
                          compression='gzip', compression_opts=4)

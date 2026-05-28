@@ -10,7 +10,8 @@ Output H5 structure
 giant.h5
   attrs: n_frames, psfcam_is_fast, plcam_type ('raw' or 'spectra')
   /metadata/
-    timestamps      float64 (N,)   — matched timestamps in time order
+    timestamps      float64 (N,)   — relative timestamps in seconds from t0
+    t0              float64        — absolute Unix timestamp of the first frame
     config          str            — JSON dump of all input parameters
   /psfcam/
     frames          float32 (N, h, w)   — dark-subtracted (from Step 1)
@@ -180,11 +181,14 @@ def ingest_to_h5(
         h5f.attrs['psfcam_is_fast'] = psfcam_is_fast
         h5f.attrs['plcam_type']    = plcam_type
 
-        # metadata group
+        # metadata group — store relative timestamps (seconds from first frame)
+        t0 = float(timestamps[0])
         meta_grp = h5f.create_group('metadata')
-        meta_grp.create_dataset('timestamps', data=timestamps, dtype='float64')
+        meta_grp.create_dataset('timestamps', data=timestamps - t0, dtype='float64')
+        meta_grp.create_dataset('t0',         data=t0,              dtype='float64')
         meta_grp.create_dataset('config',     data=json.dumps(config_dict))
         meta_grp.attrs['n_frames'] = N
+        meta_grp.attrs['t0']       = t0
 
         # psfcam group
         psf_grp = h5f.create_group('psfcam')
