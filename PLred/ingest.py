@@ -39,12 +39,11 @@ from .imageutils import subpixel_centroid_2d
 
 def ingest_to_h5(
     step1_h5,
-    plcam_dark,
     outpath,
+    plcam_dark=None,
     plcam_data_dir=None,
     plcam_roi=None,
     plcam_spectra=None,
-    chunk_frames=50,
     compression='gzip',
     compression_opts=4,
     verbose=False,
@@ -52,29 +51,32 @@ def ingest_to_h5(
     """
     Build the consolidated giant H5 (Step 2).
 
+    Each PLcam frame is stored in its own HDF5 chunk so that writes are
+    independent (no read-modify-write of neighbouring frames).  Apply
+    ``plcam_roi`` to crop the PLcam frames before storing — this is the
+    single most effective way to reduce file size and write time.
+
     Parameters
     ----------
     step1_h5 : str
         Path to the H5 file produced by Step 1 (script_match_timestamps).
-    plcam_dark : str or ndarray
-        Path to PLcam dark FITS file, or a 2-D dark frame array.
-        If None, no dark subtraction is applied to PLcam.
     outpath : str
         Output path for the giant H5 (e.g. 'obs_giant.h5').
+    plcam_dark : str or ndarray, optional
+        Path to PLcam dark FITS file, or a 2-D dark frame array.
+        If None, dark subtraction is skipped (can be done later in Step 3).
     plcam_data_dir : str, optional
         Directory containing PLcam FITS files.  When supplied, the directory
         part of the timestamp-file paths stored in the Step 1 metadata is
         replaced with this directory.  When None, the paths are used as-is.
     plcam_roi : tuple of int, optional
         (y0, y1, x0, x1) pixel crop applied to every PLcam frame before
-        storing.  Useful when only a spectral sub-region is needed, keeping
-        the output file manageable.  None = full frame.
+        storing.  Strongly recommended for large detectors — reduces both
+        file size and write time proportionally.  None = full frame.
     plcam_spectra : str or ndarray, optional
         Pre-extracted PLcam spectra with shape (N, Nlambda, Nport).
         May be a path to an .npy / .npz file or a numpy array.
         When provided, this is stored instead of raw PLcam frames.
-    chunk_frames : int
-        Number of frames per HDF5 chunk along the time axis.
     compression : str
         HDF5 compression filter ('gzip', 'lz4', 'szip', …).
     compression_opts : int
@@ -168,7 +170,6 @@ def ingest_to_h5(
         'plcam_data_dir': plcam_data_dir,
         'plcam_roi':      list(plcam_roi) if plcam_roi else None,
         'plcam_type':     plcam_type,
-        'chunk_frames':   chunk_frames,
         'compression':    compression,
         'write_time':     datetime.now().isoformat(),
     }
@@ -190,7 +191,7 @@ def ingest_to_h5(
         psf_grp.create_dataset('frames',
                                data=psfcam_frames,
                                dtype='float32',
-                               chunks=(min(chunk_frames, N), psfcam_h, psfcam_w),
+                               chunks=(1, psfcam_h, psfcam_w),
                                compression=compression,
                                compression_opts=compression_opts)
         psf_grp.create_dataset('centroids', data=centroids, dtype='float32')
@@ -204,15 +205,17 @@ def ingest_to_h5(
             pl_grp.create_dataset('spectra',
                                   data=spectra_array.astype('float32'),
                                   dtype='float32',
-                                  chunks=(min(chunk_frames, N), Nlambda, Nport),
+                                  chunks=(1, Nlambda, Nport),
                                   compression=compression,
                                   compression_opts=compression_opts)
         else:
+            # chunk=(1, ny, nx): each frame is its own chunk so writes are
+            # independent — no read-modify-write of neighbouring frames.
             frames_ds = pl_grp.create_dataset(
                 'frames',
                 shape=(N, ny, nx),
                 dtype='float32',
-                chunks=(min(chunk_frames, N), ny, nx),
+                chunks=(1, ny, nx),
                 compression=compression,
                 compression_opts=compression_opts,
             )
@@ -278,10 +281,6 @@ def ingest_from_config(configname):
 
     outpath = config['Output']['outpath']
 
-    try:
-        chunk_frames = int(config['Options']['chunk_frames'])
-    except Exception:
-        chunk_frames = 50
     compression = config['Options'].get('compression', 'gzip')
     try:
         compression_opts = int(config['Options'].get('compression_opts', 4))
@@ -291,11 +290,10 @@ def ingest_from_config(configname):
 
     return ingest_to_h5(
         step1_h5=step1_h5,
-        plcam_dark=plcam_dark,
         outpath=outpath,
+        plcam_dark=plcam_dark,
         plcam_data_dir=plcam_data_dir,
         plcam_roi=plcam_roi,
-        chunk_frames=chunk_frames,
         compression=compression,
         compression_opts=compression_opts,
         verbose=verbose,
@@ -378,18 +376,19 @@ def _write_plcam_frames(outpath, plcam_files, matched_sc_inds,
                          slowcam_fileinds, slowcam_frameinds,
                          dark_frame, roi, N, verbose):
     """
-    Second-pass writer: iterate PLcam FITS file by file, dark-subtract,
-    apply ROI, and write each matched frame into the pre-allocated dataset.
-    Keeps RAM constant regardless of dataset size.
+    Second-pass writer: open each PLcam FITS file with memmap (reads only
+    the frames we need), apply ROI and optional dark subtraction, then write
+    one frame at a time into the pre-allocated dataset.
+
+    Each write hits exactly one HDF5 chunk (1, ny, nx), so there is no
+    read-modify-write overhead from neighbouring frames.
     """
-    # Build mapping: global matched output index → (fits_file_idx, frame_in_file)
+    # Build mapping: fits_file_idx → [(out_idx, frame_in_file), ...]
     out_idx_map = {}
     for out_idx, sc_ind in enumerate(matched_sc_inds):
         file_idx  = int(slowcam_fileinds[sc_ind])
         frame_idx = int(slowcam_frameinds[sc_ind])
-        if file_idx not in out_idx_map:
-            out_idx_map[file_idx] = []
-        out_idx_map[file_idx].append((out_idx, frame_idx))
+        out_idx_map.setdefault(file_idx, []).append((out_idx, frame_idx))
 
     n_written = 0
     with h5py.File(outpath, 'r+') as h5f:
@@ -409,16 +408,28 @@ def _write_plcam_frames(outpath, plcam_files, matched_sc_inds,
             if verbose:
                 print("Reading PLcam file %d: %s" % (file_idx, fpath))
 
-            raw = fits.getdata(fpath).astype('float32')
-            if dark_frame is not None:
-                raw = raw - dark_frame  # broadcast over frame axis
+            # memmap=True pages in only the needed frames from disk.
+            # Falls back to full load when BZERO/BSCALE require rescaling.
+            try:
+                hdul = fits.open(fpath, memmap=True)
+                data = hdul[0].data
+            except Exception:
+                hdul = fits.open(fpath, memmap=False)
+                data = hdul[0].data
+            with hdul:
 
-            for out_idx, frame_idx in entries:
-                frame = raw[frame_idx]
-                if roi is not None:
-                    y0, y1, x0, x1 = roi
-                    frame = frame[y0:y1, x0:x1]
-                ds[out_idx] = frame.astype('float32')
-                n_written += 1
+                for out_idx, frame_idx in entries:
+                    frame = data[frame_idx].astype('float32')
+                    if roi is not None:
+                        y0, y1, x0, x1 = roi
+                        frame = frame[y0:y1, x0:x1]
+                    if dark_frame is not None:
+                        if roi is not None:
+                            y0, y1, x0, x1 = roi
+                            frame -= dark_frame[y0:y1, x0:x1]
+                        else:
+                            frame -= dark_frame
+                    ds[out_idx] = frame
+                    n_written += 1
 
     print("Wrote %d / %d PLcam frames" % (n_written, N))
