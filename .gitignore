@@ -189,3 +189,5 @@ tests
 PLred/IRPLred/tutorials*
 docs/*
 UPGRADE_PLAN.md
+SESSION_STATE.md
+PLred/tutorials/timestamp_matching_output/*.h5
