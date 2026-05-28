@@ -343,28 +343,69 @@ def explore_grid(
     pixel_maps = {}
     if plcam_pixels:
         with h5py.File(giant_h5, 'r') as f:
-            ds = f['plcam/frames'] if plcam_type == 'raw' else f['plcam/spectra']
-            ny = ds.shape[1]
-            nx = ds.shape[2]
-            frame_bytes = ny * nx * 4
-            total_mb = N * frame_bytes / 1e6
-            print("PLcam pixel read: %d pixels × %d frames  "
-                  "(loads ~%.0f MB per pixel from %dx%d chunks)" % (
-                      len(plcam_pixels), N, total_mb, 1, ny))
+            if plcam_type == 'raw':
+                ds = f['plcam/frames']
+                use_roi = _has_roi_access(f, roi_access_key)
 
-            for py, px in plcam_pixels:
-                values_all = ds[:, py, px].astype('float32')   # (N,)
-                values_filt = values_all[filt_mask]
+                if use_roi:
+                    roi_ds = f[roi_access_key]
+                    roi_bounds = list(roi_ds.attrs['roi'])   # [y0, y1, x0, x1]
+                    y0, y1, x0, x1 = roi_bounds
+                    print("PLcam pixel read (%d pixels): using roi_access %s  "
+                          "roi=(%d,%d,%d,%d)  fast path" % (
+                              len(plcam_pixels), roi_access_key, y0, y1, x0, x1))
+                else:
+                    ny, nx = ds.shape[1], ds.shape[2]
+                    total_mb = N * ny * nx * 4 / 1e6
+                    print("WARNING: '%s' not found — falling back to ds[:, py, px], "
+                          "which decompresses one full frame (%dx%d) per timestamp "
+                          "(~%.0f MB per pixel). Call build_ROI_access() for fast access." % (
+                              roi_access_key, ny, nx, total_mb))
 
-                pmap = np.full((map_n, map_n), np.nan, dtype='float32')
-                for i in range(map_n):
-                    for j in range(map_n):
-                        bin_mask = (xi_f == i) & (yi_f == j)
-                        if bin_mask.sum() > 0:
-                            pmap[i, j] = float(np.nanmean(values_filt[bin_mask]))
-                pixel_maps[(py, px)] = pmap
-                print("  pixel (%d, %d)  map range [%.3g, %.3g]" % (
-                    py, px, np.nanmin(pmap), np.nanmax(pmap)))
+                for py, px in plcam_pixels:
+                    if use_roi:
+                        if not (y0 <= py < y1 and x0 <= px < x1):
+                            raise ValueError(
+                                "pixel (%d, %d) is outside roi (%d,%d,%d,%d). "
+                                "Rebuild roi_access with a larger roi." % (
+                                    py, px, y0, y1, x0, x1))
+                        local_y = py - y0
+                        local_x = px - x0
+                        values_all = roi_ds[local_y, local_x, :].astype('float32')
+                    else:
+                        values_all = ds[:, py, px].astype('float32')
+
+                    values_filt = values_all[filt_mask]
+                    pmap = np.full((map_n, map_n), np.nan, dtype='float32')
+                    for i in range(map_n):
+                        for j in range(map_n):
+                            bin_mask = (xi_f == i) & (yi_f == j)
+                            if bin_mask.sum() > 0:
+                                pmap[i, j] = float(np.nanmean(values_filt[bin_mask]))
+                    pixel_maps[(py, px)] = pmap
+                    print("  pixel (%d, %d)  map range [%.3g, %.3g]" % (
+                        py, px, np.nanmin(pmap), np.nanmax(pmap)))
+
+            else:
+                # Spectra mode: unchanged
+                ds = f['plcam/spectra']
+                ny, nx = ds.shape[1], ds.shape[2]
+                total_mb = N * ny * nx * 4 / 1e6
+                print("PLcam spectra pixel read: %d pixels × %d frames  "
+                      "(~%.0f MB per pixel)" % (len(plcam_pixels), N, total_mb))
+
+                for py, px in plcam_pixels:
+                    values_all = ds[:, py, px].astype('float32')
+                    values_filt = values_all[filt_mask]
+                    pmap = np.full((map_n, map_n), np.nan, dtype='float32')
+                    for i in range(map_n):
+                        for j in range(map_n):
+                            bin_mask = (xi_f == i) & (yi_f == j)
+                            if bin_mask.sum() > 0:
+                                pmap[i, j] = float(np.nanmean(values_filt[bin_mask]))
+                    pixel_maps[(py, px)] = pmap
+                    print("  pixel (%d, %d)  map range [%.3g, %.3g]" % (
+                        py, px, np.nanmin(pmap), np.nanmax(pmap)))
 
     if plot:
         _plot_explore(nframes_map, avg_psf_map, pixel_maps, x_mas, y_mas, map_n)
