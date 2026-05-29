@@ -112,6 +112,9 @@ def _write_extraction_header(header, extractor, extra=None):
             except Exception:
                 pass
         elif isinstance(val, str):
+            # For file paths use basename to stay within FITS card limits
+            if len(val) > 65 and os.sep in val:
+                val = os.path.basename(val)
             val = val[:65] if len(val) > 65 else val
             try:
                 header[hkey] = val
@@ -163,11 +166,20 @@ def load_spectrum_model(model_file):
         (d['matrix_data'], d['matrix_indices'], d['matrix_indptr']),
         shape=tuple(d['matrix_shape']),
     )
+    nwav = int(d['xmax']) - int(d['xmin'])
+    # ny_full: full detector height used when building A.
+    # Derive from matrix shape if not explicitly stored (backward compat).
+    if 'ny_full' in d:
+        ny_full = int(d['ny_full'])
+    else:
+        ny_full = A.shape[1] // nwav if nwav > 0 else None
+
     return SimpleNamespace(
         A          = A,
         xmin       = int(d['xmin']),
         xmax       = int(d['xmax']),
         XMIN       = int(d['XMIN']) if 'XMIN' in d else 0,
+        ny_full    = ny_full,
         trace_vals = d['trace_vals'] if 'trace_vals' in d else None,
         wav_map    = d['wav_map']    if 'wav_map'    in d else None,
     )
@@ -256,13 +268,15 @@ def extract_to_coupling_map(
     # If the H5 images are a hardware ROI crop, column 0 in the image
     # corresponds to detector column x0_roi, so we must convert:
     #   image_col = det_col - x0_roi
-    _ext_info = getattr(extractor, '_info', {})
-    model_xmin = _ext_info.get('xmin', None)
-    model_xmax = _ext_info.get('xmax', None)
+    _ext_info  = getattr(extractor, '_info', {})
+    model_xmin = _ext_info.get('xmin',    None)
+    model_xmax = _ext_info.get('xmax',    None)
+    ny_full    = _ext_info.get('ny_full', None)   # full detector height (FIRSTPL)
+
+    roi_x0 = int(plcam_roi[2]) if plcam_roi is not None else 0
+    roi_y0 = int(plcam_roi[0]) if plcam_roi is not None else 0
 
     if model_xmin is not None and model_xmax is not None:
-        roi_x0 = int(plcam_roi[2]) if plcam_roi is not None else 0
-        roi_y0 = int(plcam_roi[0]) if plcam_roi is not None else 0
         img_xmin = model_xmin - roi_x0
         img_xmax = model_xmax - roi_x0
         img_nx   = avg_plcam.shape[3]
@@ -273,15 +287,24 @@ def extract_to_coupling_map(
                 f"(roi_x0={roi_x0}).  Check plcam_roi or model bounds."
             )
     else:
-        roi_y0   = 0
         img_xmin = None
         img_xmax = None
 
     def _crop_image(image):
-        """Slice image to model spectral range in image-local coordinates."""
-        if img_xmin is not None:
-            return image[:, img_xmin:img_xmax]
-        return image
+        """Slice to model spectral range and y-embed for full-detector extractors."""
+        # 1. x-slice to model column range
+        out = image[:, img_xmin:img_xmax] if img_xmin is not None else image
+
+        # 2. y-embed: extractors whose matrix was built on full-detector height
+        #    (FIRSTPL optimal) need a (ny_full, nwav) image even when H5 stores
+        #    a y-cropped ROI.  Embed the ROI at the correct detector y-offset.
+        if ny_full is not None and out.shape[0] < ny_full:
+            full = np.zeros((ny_full, out.shape[1]), dtype=np.float32)
+            ny_roi = out.shape[0]
+            full[roi_y0:roi_y0 + ny_roi, :] = out
+            return full
+
+        return out
 
     # Warn if the extractor will double-subtract or skip dark
     extractor_has_dark = _ext_info.get('has_dark', False)
@@ -309,6 +332,9 @@ def extract_to_coupling_map(
         if img_xmin is not None:
             print(f"  model xmin/xmax: [{model_xmin},{model_xmax}]  "
                   f"→ image cols [{img_xmin},{img_xmax}]")
+        if ny_full is not None:
+            print(f"  ny_full={ny_full}  roi_y0={roi_y0}  "
+                  f"(y-embed={'yes' if avg_plcam.shape[2] < ny_full else 'no'})")
 
     # ------------------------------------------------------------------
     # 2. Extract spectra for each grid bin
@@ -573,9 +599,19 @@ def extract_from_fits(
             if xmin is not None or xmax is not None:
                 print(f"  column slice: [{_xmin}:{_xmax}]  ({_xmax - _xmin} px)")
 
+        # For FIRSTPL extractor: y-embed ROI frame back to full detector height
+        _ny_full = _info.get('ny_full', None)
+        _y0_roi  = ymin if (ymin := _info.get('ymin', None)) is not None else 0
+
         def _prep(frame):
-            """Dark-subtract and column-slice a single frame."""
-            return (frame - master_dark)[:, _xmin:_xmax]
+            """Dark-subtract, x-slice, and y-embed if needed."""
+            out = (frame - master_dark)[:, _xmin:_xmax]
+            if _ny_full is not None and out.shape[0] < _ny_full:
+                full = np.zeros((_ny_full, out.shape[1]), dtype=np.float32)
+                ny_frame = out.shape[0]
+                full[_y0_roi:_y0_roi + ny_frame, :] = out
+                return full
+            return out
 
         # Probe output shape on first frame
         test_spec = extractor(_prep(cube[0]))
@@ -1018,27 +1054,31 @@ def make_FIRSTPL_extractor(model_file, dark=None, nonlin_modelfile=None,
     >>> # Mode B — raw FITS cubes (xmin/xmax auto-detected from model)
     >>> specextract.extract_from_fits(['sci.fits'], extractor, dark_fits='dark.fits')
     """
-    model = load_spectrum_model(model_file)
-    A        = model.A
-    wav_map  = model.wav_map        # (nfib, nwav) or None
-    xmin     = model.xmin
-    xmax     = model.xmax
-    nwav     = xmax - xmin
+    model   = load_spectrum_model(model_file)
+    A       = model.A
+    wav_map = model.wav_map        # (nfib, nwav) or None
+    xmin    = model.xmin
+    xmax    = model.xmax
+    nwav    = xmax - xmin
+    ny_full = model.ny_full        # full detector height the matrix was built for
+    # Derive nfib from matrix — avoids relying on the hardcoded nspec=38 in
+    # frame_to_spec / vec_to_mat, which breaks for non-FIRST-PL instruments.
+    nfib    = A.shape[0] // nwav
 
     def _extract(image):
-        # image: (ny, nwav)  — already cropped to xmin:xmax
+        # image: (ny_full, nwav) — x-sliced and y-embedded by _crop_image
         im = image - dark if dark is not None else image.copy()
         if nonlin_modelfile is not None:
             from PLred.visPLred.preprocess import correct_nonlinearity_map
             im, _ = correct_nonlinearity_map(im, nonlin_modelfile)
-        from PLred.visPLred.spec import frame_to_spec
-        spec = frame_to_spec(
-            im, 0, nwav,
-            wavmap     = wav_map,
-            matrix     = A,
-            var_const  = var_const,
-            thresh     = thresh,
+        from PLred.visPLred.spec import extract_spec_optimal, interpolate_spectrum, flatten_im
+        imvec = flatten_im(im, 0, nwav)           # (ny_full * nwav,)
+        spec_flat, _ = extract_spec_optimal(
+            A, imvec, var_const=var_const, thresh=thresh,
         )
+        spec = spec_flat.reshape(nfib, nwav)      # (nfib, nwav) — not hardcoded
+        if wav_map is not None:
+            spec = interpolate_spectrum(spec, wav_map)
         return spec.astype(np.float32)
 
     return _attach_info(_extract, {
@@ -1046,6 +1086,7 @@ def make_FIRSTPL_extractor(model_file, dark=None, nonlin_modelfile=None,
         'model_file':       str(model_file),
         'xmin':             xmin,
         'xmax':             xmax,
+        'ny_full':          ny_full,    # full detector height; used for y-ROI embedding
         'var_const':        var_const,
         'thresh':           thresh,
         'nonlin_modelfile': str(nonlin_modelfile) if nonlin_modelfile else 'none',

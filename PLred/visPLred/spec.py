@@ -1057,7 +1057,9 @@ class SpectrumModel:
             print("Warning: xmin/xmax not found — skipping.")
 
         # Global detector offset used for trace indexing
-        save_dict['XMIN'] = np.array(self.XMIN)
+        save_dict['XMIN']    = np.array(self.XMIN)
+        # Full detector height the matrix was built for (needed for y-ROI handling)
+        save_dict['ny_full'] = np.array(self.NY)
 
         # Fiber traces (full XMIN:XMAX range)
         try:

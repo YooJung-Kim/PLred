@@ -894,6 +894,11 @@ def _average_one(
         dark_subtracted = bool(f.attrs.get('plcam_dark_subtracted', None))
         dark_source     = str(f['plcam'].attrs.get('dark_source', 'unknown')) \
                           if 'plcam' in f else 'unknown'
+        # Auto-read plcam ROI from the giant H5 if not supplied by the caller.
+        # This ensures metadata/plcam_roi is always present in the averaged H5
+        # so that extract_to_coupling_map can align spectral model coordinates.
+        if plcam_roi is None and 'plcam' in f and 'roi' in f['plcam'].attrs:
+            plcam_roi = tuple(int(v) for v in f['plcam'].attrs['roi'])
 
     plcam_dims = plcam_shape[1:]  # (ny, nx) or (Nlambda, Nport)
 
