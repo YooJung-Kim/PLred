@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PLred ROI H5 Viewer</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Plus+Jakarta+Sans:wght@400;500;700&display=swap');
+:root {
+  --bg: #f4f7fb;
+  --panel: #ffffff;
+  --ink: #102033;
+  --muted: #5b6b7f;
+  --line: #d7e0ea;
+  --accent: #2563eb;
+  --accent-2: #0f766e;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: radial-gradient(1200px 700px at 10% -20%, #dbeafe 0%, transparent 48%),
+              radial-gradient(900px 500px at 90% 0%, #ccfbf1 0%, transparent 42%),
+              linear-gradient(180deg, #f8fbff 0%, var(--bg) 100%);
+  color: var(--ink);
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+header {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 90%, #eef4fb);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.brand {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-right: 8px;
+}
+input[type="text"], input[type="number"], textarea {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+}
+button {
+  border: 0;
+  border-radius: 10px;
+  padding: 9px 14px;
+  cursor: pointer;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+}
+button.secondary { background: var(--accent-2); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+#status {
+  margin-left: auto;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  max-width: min(48vw, 720px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#load-progress {
+  width: min(32vw, 360px);
+  height: 6px;
+  border-radius: 999px;
+  background: #e4edf6;
+  overflow: hidden;
+  display: none;
+}
+#load-progress-bar {
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, #1d4ed8, #06b6d4, #10b981);
+  transition: width 120ms linear;
+}
+main {
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  height: calc(100vh - 66px);
+}
+aside {
+  border-right: 1px solid var(--line);
+  padding: 14px;
+  background: var(--panel);
+  overflow: auto;
+}
+.section {
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  background: #fff;
+}
+.section h3 {
+  margin: 0 0 10px 0;
+  font-size: 12px;
+  font-family: 'IBM Plex Mono', monospace;
+  color: var(--muted);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.row label { min-width: 88px; font-size: 12px; color: var(--muted); }
+.row input[type="number"], .row input[type="text"] { width: 100%; }
+.row input[type="range"] { flex: 1; }
+.time-range-wrap { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.time-range-track { position: relative; height: 20px; display: flex; align-items: center; }
+.time-range-bg {
+  position: absolute; left: 0; right: 0; height: 4px;
+  background: #d3c9b8; border-radius: 3px;
+}
+.time-range-fill {
+  position: absolute; height: 4px;
+  background: var(--accent); border-radius: 3px; pointer-events: none;
+}
+.time-range-track input[type="range"] {
+  position: absolute; width: 100%; background: transparent; margin: 0; pointer-events: none;
+}
+.time-range-track input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent-2); box-shadow: 0 0 0 2px #fff; pointer-events: all;
+}
+.time-range-track input[type="range"]::-moz-range-thumb {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent-2); border: 2px solid #fff; pointer-events: all;
+}
+.time-range-labels {
+  display: flex; justify-content: space-between;
+  font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--muted);
+}
+#tabbar { display: flex; gap: 6px; margin-bottom: 10px; }
+.tabbtn {
+  background: #e5ddd0; color: #423f39;
+  font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+  text-transform: uppercase; letter-spacing: .04em;
+}
+.tabbtn.active { background: var(--accent); color: #fff; }
+#canvas-wrap { overflow: auto; padding: 18px; }
+#frame-tab, #map-tab { display: none; }
+#frame-tab.active, #map-tab.active { display: block; }
+.panel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+.frames-per-bin-wrap { display: flex; align-items: stretch; gap: 12px; }
+.frames-per-bin-main { flex: 1 1 auto; min-width: 0; }
+.frames-per-bin-main canvas { width: 100%; max-width: 300px; margin: 0 auto; }
+.frames-per-bin-legend { width: 64px; display: flex; gap: 6px; align-items: stretch; }
+.frames-per-bin-colorbar {
+  width: 22px; height: 100%; min-height: 260px;
+  border-radius: 999px; border: 1px solid var(--line);
+}
+.frames-per-bin-labels {
+  display: flex; flex-direction: column; justify-content: space-between; padding: 2px 0;
+  font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--muted); white-space: nowrap;
+}
+.card { border: 1px solid var(--line); border-radius: 12px; background: #fff; padding: 10px; }
+.card h4 {
+  margin: 0 0 8px 0; font-size: 12px; color: var(--muted);
+  text-transform: uppercase; font-family: 'IBM Plex Mono', monospace;
+}
+canvas {
+  border: 1px solid var(--line); border-radius: 8px; display: block;
+  image-rendering: pixelated; width: 100%; height: auto; background: #111;
+}
+#roi-canvas { width: auto; max-width: 100%; margin: 0 auto; cursor: crosshair; }
+.roi-viewport {
+  border: 1px dashed var(--line); border-radius: 8px;
+  max-height: 460px; overflow: auto; padding: 6px; background: #0f0f0f;
+}
+#maps { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.map-card { border: 1px solid var(--line); border-radius: 10px; padding: 8px; background: #fff; }
+.map-title { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+.note { font-size: 12px; color: var(--muted); line-height: 1.4; }
+.kv { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--muted); line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">PLred ROI H5 Viewer</div>
+  <input id="h5-url" type="text" style="min-width:420px;" placeholder="http://localhost:8000/roi_access.h5">
+  <button id="load-btn">Load .h5 URL</button>
+  <button id="file-btn" class="secondary">Upload .h5</button>
+  <input id="file-input" type="file" accept=".h5,.hdf5" style="display:none;">
+  <div id="load-progress"><div id="load-progress-bar"></div></div>
+  <div id="status">Ready. Load a .h5 by URL or upload directly.</div>
+</header>
+
+<main>
+  <aside>
+    <div class="section">
+      <h3>Data Summary</h3>
+      <div id="summary" class="kv">No data loaded.</div>
+    </div>
+
+    <div class="section">
+      <h3>Filters</h3>
+      <div class="time-range-wrap" style="margin-bottom:8px;">
+        <div class="time-range-track">
+          <div class="time-range-bg"></div>
+          <div class="time-range-fill" id="time-fill"></div>
+          <input id="time-min-slider" type="range" min="0" max="1000" value="0" step="1">
+          <input id="time-max-slider" type="range" min="0" max="1000" value="1000" step="1">
+        </div>
+        <div class="time-range-labels">
+          <span id="time-slider-min-label">--:--:--</span>
+          <span id="time-slider-max-label">--:--:--</span>
+        </div>
+      </div>
+      <div class="row"><label>Time min</label><input id="time-min" type="number" step="0.1" placeholder="auto"></div>
+      <div class="row"><label>Time max</label><input id="time-max" type="number" step="0.1" placeholder="auto"></div>
+      <div class="row"><label>Max pix value min</label><input id="strehl-min" type="number" step="0.01" placeholder="auto"></div>
+      <div class="row"><label>Max pix value max</label><input id="strehl-max" type="number" step="0.01" placeholder="auto"></div>
+    </div>
+
+    <div class="section">
+      <h3>Grid</h3>
+      <div class="row"><label>map_n</label><input id="map-n" type="number" value="15" min="2"></div>
+      <div class="row"><label>map_width</label><input id="map-width" type="number" value="3" min="0.1" step="0.1"></div>
+      <div class="row"><label>pix2mas</label><input id="pix2mas" type="number" value="16.2" min="0.001" step="0.1"></div>
+      <div class="row"><label>xc</label><input id="xc" type="number" step="0.01" placeholder="auto"></div>
+      <div class="row"><label>yc</label><input id="yc" type="number" step="0.01" placeholder="auto"></div>
+    </div>
+
+    <div class="section">
+      <h3>Pixel List</h3>
+      <textarea id="pixels" rows="5" style="width:100%;" placeholder="120, 5&#10;121, 5"></textarea>
+      <div class="row" style="margin-top:8px;gap:6px;">
+        <button id="pixel-file-btn" class="secondary" style="font-size:11px;padding:6px 10px;">Upload .txt</button>
+        <button id="pixel-clear-btn" style="font-size:11px;padding:6px 10px;background:#9ca3af;">Clear</button>
+        <input id="pixel-file-input" type="file" accept=".txt,.csv" style="display:none;">
+      </div>
+      <div class="note" style="margin-top:6px;">Global PL coordinates (py, px), one per line. Upload a text file to append to the list.</div>
+    </div>
+
+    <div class="section">
+      <h3>Actions</h3>
+      <div class="row">
+        <button id="compute-btn" disabled>Compute Maps</button>
+      </div>
+      <div class="note">Frame tab requires psf_frames dataset. ROI frame preview limited to ≤6000 pixels.</div>
+    </div>
+  </aside>
+
+  <section id="canvas-wrap">
+    <div id="tabbar">
+      <button class="tabbtn active" data-tab="frame-tab">Frame Browser</button>
+      <button class="tabbtn" data-tab="map-tab">Response Maps</button>
+    </div>
+
+    <div id="map-tab">
+      <div class="panel-grid">
+        <div class="card">
+          <h4>Frames Per Bin</h4>
+          <div class="frames-per-bin-wrap">
+            <div class="frames-per-bin-main">
+              <canvas id="nframes-canvas" width="360" height="360"></canvas>
+            </div>
+            <div class="frames-per-bin-legend">
+              <canvas id="nframes-colorbar" class="frames-per-bin-colorbar" width="22" height="260"></canvas>
+              <div class="frames-per-bin-labels">
+                <span id="nframes-max-label">max</span>
+                <span id="nframes-min-label">0</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style="height:12px;"></div>
+      <div id="maps"></div>
+    </div>
+
+    <div id="frame-tab" class="active">
+      <div class="card" style="margin-bottom:10px;">
+        <div class="row" style="margin:0;">
+          <label style="min-width:120px;">Frame Index</label>
+          <input id="frame-slider" type="range" min="0" max="0" value="0" step="1">
+          <span id="frame-label" class="kv">0</span>
+        </div>
+      </div>
+      <div class="panel-grid">
+        <div class="card">
+          <h4>PSF Frame</h4>
+          <canvas id="psf-canvas" width="720" height="720"></canvas>
+        </div>
+        <div class="card">
+          <h4>PL ROI Frame</h4>
+          <div class="row" style="margin-bottom:8px;">
+            <label style="min-width:120px;">ROI Zoom</label>
+            <input id="roi-zoom" type="range" min="1" max="12" step="1" value="4">
+            <span id="roi-zoom-val" class="kv">4x</span>
+          </div>
+          <div class="roi-viewport">
+            <canvas id="roi-canvas" width="320" height="320"></canvas>
+          </div>
+          <div id="roi-msg" class="note" style="margin-top:8px;"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+// ── state ─────────────────────────────────────────────────────────────────────
+let dataLoaded    = false;
+let arrays        = {};
+let meta          = {};
+let roiClickState = { enabled: false, w: 0, h: 0 };
+let currentH5File = null;
+let currentH5Path = null;
+let h5ModuleReady = null;
+
+// ── DOM refs ──────────────────────────────────────────────────────────────────
+const statusEl           = document.getElementById('status');
+const summaryEl          = document.getElementById('summary');
+const loadBtn            = document.getElementById('load-btn');
+const fileBtn            = document.getElementById('file-btn');
+const fileInput          = document.getElementById('file-input');
+const loadProgress       = document.getElementById('load-progress');
+const loadProgressBar    = document.getElementById('load-progress-bar');
+const computeBtn         = document.getElementById('compute-btn');
+const timeMinInput       = document.getElementById('time-min');
+const timeMaxInput       = document.getElementById('time-max');
+const timeMinSlider      = document.getElementById('time-min-slider');
+const timeMaxSlider      = document.getElementById('time-max-slider');
+const timeFill           = document.getElementById('time-fill');
+const timeSliderMinLabel = document.getElementById('time-slider-min-label');
+const timeSliderMaxLabel = document.getElementById('time-slider-max-label');
+
+// ── status / progress ─────────────────────────────────────────────────────────
+function setStatus(msg) { statusEl.textContent = msg; }
+
+function setProgress(msg, frac) {
+  if (msg) statusEl.textContent = msg;
+  if (frac == null) { loadProgress.style.display = 'none'; return; }
+  loadProgress.style.display = 'block';
+  loadProgressBar.style.width = `${Math.max(0, Math.min(100, frac * 100)).toFixed(1)}%`;
+}
+
+// ── typed-array normalisation ─────────────────────────────────────────────────
+// h5wasm .value may return plain Array, various TypedArray kinds, BigInt64Array
+// (for int64 datasets), or ndarray-like objects. We always normalise to regular
+// Float32/Float64 so arithmetic never mixes BigInt and Number.
+function isBigIntArray(raw) {
+  return raw instanceof BigInt64Array || raw instanceof BigUint64Array;
+}
+function toF32(raw) {
+  if (raw instanceof Float32Array) return raw;
+  if (isBigIntArray(raw)) { const o = new Float32Array(raw.length); for (let i=0;i<raw.length;i++) o[i]=Number(raw[i]); return o; }
+  if (raw instanceof Float64Array)  { const o = new Float32Array(raw.length); for (let i=0;i<raw.length;i++) o[i]=raw[i]; return o; }
+  if (ArrayBuffer.isView(raw))      return new Float32Array(raw.buffer, raw.byteOffset, raw.byteLength / raw.BYTES_PER_ELEMENT | 0);
+  return new Float32Array(Array.from(raw, v => Number(v)));
+}
+function toF64(raw) {
+  if (raw instanceof Float64Array) return raw;
+  if (isBigIntArray(raw)) { const o = new Float64Array(raw.length); for (let i=0;i<raw.length;i++) o[i]=Number(raw[i]); return o; }
+  if (ArrayBuffer.isView(raw))     return new Float64Array(raw.buffer, raw.byteOffset, raw.byteLength / raw.BYTES_PER_ELEMENT | 0);
+  return new Float64Array(Array.from(raw, v => Number(v)));
+}
+
+// ── h5wasm plumbing ───────────────────────────────────────────────────────────
+function getH5Module() {
+  if (!h5ModuleReady) {
+    h5ModuleReady = import('https://cdn.jsdelivr.net/npm/h5wasm@latest/dist/esm/hdf5_hl.js')
+      .then(async mod => { const m = await mod.default.ready; return { H5: mod.default, FS: m.FS }; });
+  }
+  return h5ModuleReady;
+}
+
+function safeName(s) { return String(s || 'roi_access.h5').replace(/[^A-Za-z0-9._-]+/g,'_'); }
+
+function attrVal(attrs, key) {
+  if (!attrs) return null;
+  const e = attrs[key];
+  return (e && typeof e === 'object' && 'value' in e) ? e.value : (e ?? null);
+}
+
+function getDs(h5, path) {
+  try { const o = h5.get(path); return (o && (o.type==='Dataset' || o.value!==undefined)) ? o : null; }
+  catch(_) { return null; }
+}
+
+function closeH5() {
+  if (currentH5File) { try { currentH5File.close(); } catch(_){} currentH5File = null; }
+  if (currentH5Path) {
+    getH5Module().then(({FS}) => { try { if (FS.analyzePath(currentH5Path).exists) FS.unlink(currentH5Path); } catch(_){} }).catch(()=>{});
+    currentH5Path = null;
+  }
+}
+
+async function openH5(bytes, name) {
+  const { H5, FS } = await getH5Module();
+  if (!FS.analyzePath('/tmp').exists) FS.mkdir('/tmp');
+  const path = `/tmp/${Date.now()}-${safeName(name)}`;
+  FS.writeFile(path, bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
+  closeH5();
+  currentH5Path = path;
+  currentH5File = new H5.File(path, 'r');
+  return currentH5File;
+}
+
+// ── array handle ──────────────────────────────────────────────────────────────
+function makeHandle(raw, shape) {
+  const d = toF32(raw);
+  return {
+    data: d, shape,
+
+    // roi_access layout: [roi_h, roi_w, N]
+    roiPixelSeries(ly, lx) {
+      const n = shape[2], base = (ly * shape[1] + lx) * n;
+      return d.subarray(base, base + n);
+    },
+
+    // psf_frames layout: [N, h, w]
+    psfFrame(k) {
+      const rows = shape[1], cols = shape[2], base = k * rows * cols;
+      return { data: d.subarray(base, base + rows * cols), h: rows, w: cols };
+    },
+
+    // roi_access read-back as 2D frame: reconstruct [h, w] slice at time k
+    roiFrame(k, maxPx = 6000) {
+      const rows = shape[0], cols = shape[1], T = shape[2];
+      if (rows * cols > maxPx) return { tooLarge: true, h: rows, w: cols, maxPx };
+      const out = new Float32Array(rows * cols);
+      for (let y = 0; y < rows; y++)
+        for (let x = 0; x < cols; x++)
+          out[y * cols + x] = d[(y * cols + x) * T + k];
+      return { data: out, h: rows, w: cols };
+    },
+  };
+}
+
+// ── fetch helpers ─────────────────────────────────────────────────────────────
+async function fetchBytes(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const len = Number(r.headers.get('content-length') || 0) || null;
+  const reader = r.body.getReader();
+  const chunks = []; let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value); got += value.length;
+    setProgress(len ? `Downloading ${Math.round(got/len*100)}%…` : `Downloading ${(got/1048576).toFixed(1)} MB…`, len ? got/len : null);
+  }
+  const out = new Uint8Array(got); let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.length; }
+  return out;
+}
+
+function readFile(file) {
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onprogress = e => { if (e.lengthComputable) setProgress(`Reading ${Math.round(e.loaded/e.total*100)}%…`, e.loaded/e.total); };
+    fr.onload  = () => res(fr.result);
+    fr.onerror = () => rej(fr.error);
+    fr.readAsArrayBuffer(file);
+  });
+}
+
+// ── H5 load & parse ───────────────────────────────────────────────────────────
+async function loadH5(h5, label) {
+  dataLoaded = false;
+  setProgress('Parsing H5…', null);
+
+  const ra  = getDs(h5, 'roi_access');  if (!ra)  throw new Error('roi_access dataset missing');
+  const ts  = getDs(h5, 'timestamps');  if (!ts)  throw new Error('timestamps dataset missing');
+  const pk  = getDs(h5, 'peaks');       if (!pk)  throw new Error('peaks dataset missing');
+  const cc  = getDs(h5, 'centroids');   if (!cc)  throw new Error('centroids dataset missing');
+  const psf = getDs(h5, 'psf_frames');  // optional
+
+  setStatus('Reading arrays…');
+
+  const roiShape = Array.from(ra.shape  || []);
+  const tsShape  = Array.from(ts.shape  || []);
+  const ccShape  = Array.from(cc.shape  || []);
+  const psfShape = psf ? Array.from(psf.shape || []) : null;
+
+  const tsData = toF64(ts.value);
+  const pkData = toF32(pk.value);
+  const ccData = toF32(cc.value);
+
+  arrays = {
+    roi:  makeHandle(ra.value, roiShape),
+    psf:  psf ? makeHandle(psf.value, psfShape) : null,
+  };
+
+  // resolve roi bounds: check root attrs, then dataset attrs, then fall back
+  const rootAttrs = h5.attrs || {};
+  const raAttrs   = ra.attrs || {};
+  let roi = attrVal(rootAttrs, 'roi') || attrVal(raAttrs, 'roi');
+  if (!roi) roi = [0, roiShape[0], 0, roiShape[1]];
+  roi = Array.from(roi).map(Number);
+
+  const t0raw = attrVal(rootAttrs, 't0');
+  const t0    = (t0raw !== null && Number.isFinite(+t0raw)) ? +t0raw : null;
+
+  meta = {
+    timestamps: tsData,
+    peaks:      pkData,
+    centroids:  ccData,
+    N:    tsData.length,
+    roi,
+    t0,
+    hasPsf: Boolean(psf),
+    roiShape,
+    psfShape,
+  };
+
+  const tMin = Math.min(...tsData), tMax = Math.max(...tsData);
+  const pMin = Math.min(...pkData),  pMax = Math.max(...pkData);
+
+  summaryEl.textContent = [
+    `N = ${meta.N}`,
+    `roi = [${roi.join(', ')}]`,
+    `roi_access = [${roiShape.join(', ')}]`,
+    `psf_frames = ${psf ? '['+psfShape.join(', ')+']' : 'missing'}`,
+    `t0 = ${t0 ?? 'n/a'}`,
+    `timestamps: [${tMin.toFixed(2)}, ${tMax.toFixed(2)}] s`,
+    `peaks: [${pMin.toFixed(3)}, ${pMax.toFixed(3)}]`,
+  ].join('\n');
+
+  timeMinInput.placeholder = fmtTime(tMin);
+  timeMaxInput.placeholder = fmtTime(tMax);
+  document.getElementById('strehl-min').placeholder = pMin.toFixed(3);
+  document.getElementById('strehl-max').placeholder = pMax.toFixed(3);
+  initSliders(tMin, tMax);
+
+  dataLoaded = true;
+  computeBtn.disabled = false;
+  setProgress(null);
+  setStatus(`Loaded: ${label}. Configure filters/grid then click Compute Maps.`);
+  if (meta.hasPsf) { try { await loadFrameTab(); } catch(e) { setStatus('Frame load error: ' + e.message); } }
+}
+
+async function loadFromUrl() {
+  const url = document.getElementById('h5-url').value.trim();
+  if (!url) throw new Error('Enter an H5 URL');
+  const bytes = await fetchBytes(url);
+  const h5 = await openH5(bytes, url.split('/').pop() || 'roi_access.h5');
+  await loadH5(h5, url);
+}
+
+async function loadFromFile(file) {
+  const buf = await readFile(file);
+  const h5  = await openH5(buf, file.name);
+  await loadH5(h5, file.name);
+}
+
+// ── time helpers ──────────────────────────────────────────────────────────────
+function clamp(v,lo,hi) { return Math.max(lo, Math.min(hi, v)); }
+
+function unixClock(u) {
+  const d = new Date(u * 1000);
+  return [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2,'0')).join(':');
+}
+function fmtTime(rel) {
+  if (!Number.isFinite(rel)) return '--:--:--';
+  return meta.t0 != null ? `${unixClock(meta.t0 + rel)}  (+${rel.toFixed(2)}s)` : rel.toFixed(3);
+}
+function parseTimeText(txt) {
+  txt = (txt || '').trim();
+  if (!txt) return null;
+  const n = Number(txt);
+  if (Number.isFinite(n)) return n;
+  const m = txt.match(/^(\d{1,2}):(\d{2}):(\d{2}(?:\.\d+)?)$/);
+  if (!m) return null;
+  const secs = +m[1]*3600 + +m[2]*60 + +m[3];
+  if (meta.t0 != null) { const base = (meta.t0 % 86400 + 86400) % 86400; return ((secs - base) + 86400) % 86400; }
+  return secs;
+}
+
+// ── time slider ───────────────────────────────────────────────────────────────
+function refreshSliderFill() {
+  const lo = +timeMinSlider.min, hi = +timeMinSlider.max, span = Math.max(1, hi - lo);
+  const a  = +timeMinSlider.value, b = +timeMaxSlider.value;
+  timeFill.style.left  = `${(a - lo) / span * 100}%`;
+  timeFill.style.width = `${Math.max(0, b - a) / span * 100}%`;
+  timeSliderMinLabel.textContent = fmtTime(a);
+  timeSliderMaxLabel.textContent = fmtTime(b);
+}
+function slidersToInputs() {
+  const a = +timeMinSlider.value, b = +timeMaxSlider.value;
+  timeMinInput.value = meta.t0 != null ? unixClock(meta.t0 + a) : a.toFixed(3);
+  timeMaxInput.value = meta.t0 != null ? unixClock(meta.t0 + b) : b.toFixed(3);
+  refreshSliderFill();
+}
+function inputsToSliders() {
+  const lo = +timeMinSlider.min, hi = +timeMinSlider.max;
+  let a = parseTimeText(timeMinInput.value) ?? +timeMinSlider.value;
+  let b = parseTimeText(timeMaxInput.value) ?? +timeMaxSlider.value;
+  a = clamp(a, lo, hi); b = clamp(b, lo, hi);
+  if (a > b) a = b = (a + b) / 2;
+  timeMinSlider.value = a; timeMaxSlider.value = b;
+  refreshSliderFill();
+}
+function initSliders(lo, hi) {
+  [timeMinSlider, timeMaxSlider].forEach(s => { s.min = String(Math.floor(lo)); s.max = String(Math.ceil(hi)); });
+  timeMinSlider.value = String(Math.floor(lo));
+  timeMaxSlider.value = String(Math.ceil(hi));
+  slidersToInputs();
+}
+
+// ── colour ────────────────────────────────────────────────────────────────────
+function turbo(t) {
+  const x = clamp(t, 0, 1);
+  const r = 34.61 + x*(1172.33 + x*(-10793.56 + x*(33300.12 + x*(-38394.49 + x*14825.05))));
+  const g = 23.31 + x*(557.33   + x*(1225.33   + x*(-3574.96  + x*(1073.77  + x*707.56))));
+  const b = 27.2  + x*(3211.1   + x*(-15327.97 + x*(27814.0   + x*(-22569.18+ x*6838.66))));
+  return [clamp(Math.round(r),0,255), clamp(Math.round(g),0,255), clamp(Math.round(b),0,255)];
+}
+function drawColorbar(cv) {
+  const ctx = cv.getContext('2d'), img = ctx.createImageData(cv.width, cv.height);
+  for (let y = 0; y < cv.height; y++) {
+    const [r,g,b] = turbo(1 - y / (cv.height - 1));
+    for (let x = 0; x < cv.width; x++) { const i=(y*cv.width+x)*4; img.data[i]=r;img.data[i+1]=g;img.data[i+2]=b;img.data[i+3]=255; }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+function drawHeat(cv, data, w, h) {
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d'), img = ctx.createImageData(w, h);
+  let mn = Infinity, mx = -Infinity;
+  for (let i = 0; i < data.length; i++) { const v = data[i]; if (Number.isFinite(v)) { if (v<mn) mn=v; if (v>mx) mx=v; } }
+  if (!Number.isFinite(mn) || mn === mx) { mn = 0; mx = 1; }
+  for (let i = 0; i < data.length; i++) {
+    const v = data[i], ok = Number.isFinite(v) && !isNaN(v);
+    const [r,g,b] = turbo(ok ? clamp((v-mn)/(mx-mn),0,1) : 0);
+    img.data[i*4]=r; img.data[i*4+1]=g; img.data[i*4+2]=b; img.data[i*4+3]=ok?255:70;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+function fitCanvas(cv, w, h, maxW, maxH) {
+  const s = Math.min(maxW/Math.max(1,w), maxH/Math.max(1,h));
+  cv.style.width  = `${Math.max(1, w*s|0)}px`;
+  cv.style.height = `${Math.max(1, h*s|0)}px`;
+}
+
+// ── filters & grid ────────────────────────────────────────────────────────────
+function numVal(id) { const v = document.getElementById(id).value.trim(); if (!v) return null; const n=+v; return Number.isFinite(n)?n:null; }
+
+function buildMask() {
+  const tLo = parseTimeText(timeMinInput.value) ?? +timeMinSlider.value;
+  const tHi = parseTimeText(timeMaxInput.value) ?? +timeMaxSlider.value;
+  const sLo = numVal('strehl-min'), sHi = numVal('strehl-max');
+  const mask = new Uint8Array(meta.N); let kept = 0;
+  for (let i = 0; i < meta.N; i++) {
+    const t = meta.timestamps[i], p = meta.peaks[i];
+    if ((tLo==null||t>=tLo)&&(tHi==null||t<=tHi)&&(sLo==null||p>=sLo)&&(sHi==null||p<=sHi)) { mask[i]=1; kept++; }
+  }
+  return { mask, kept };
+}
+
+function arrMedian(arr) {
+  const s = Float32Array.from(arr).sort(); const m = s.length>>1;
+  return s.length%2 ? s[m] : (s[m-1]+s[m])/2;
+}
+
+function buildGrid(mask) {
+  const mapN     = Math.max(2, numVal('map-n')    ?? 15);
+  const mapWidth = numVal('map-width') ?? 3;
+  const xs=[], ys=[];
+  for (let i=0;i<meta.N;i++) { if (!mask[i]) continue; xs.push(meta.centroids[i*2]); ys.push(meta.centroids[i*2+1]); }
+  if (!xs.length) throw new Error('No frames pass current filters.');
+
+  const xc = numVal('xc') ?? arrMedian(xs);
+  const yc = numVal('yc') ?? arrMedian(ys);
+  const x0 = xc - mapWidth/2, y0 = yc - mapWidth/2;
+  const dx = mapWidth/mapN,   dy = mapWidth/mapN;
+
+  const nframes = new Int32Array(mapN*mapN);
+  const bins    = new Int32Array(meta.N).fill(-1);
+
+  for (let i=0;i<meta.N;i++) {
+    if (!mask[i]) continue;
+    const ix = Math.floor((meta.centroids[i*2]   - x0) / dx);
+    const iy = Math.floor((meta.centroids[i*2+1] - y0) / dy);
+    if (ix<0||ix>=mapN||iy<0||iy>=mapN) continue;
+    bins[i] = iy*mapN+ix;
+    nframes[iy*mapN+ix]++;
+  }
+  return { mapN, nframes, bins, xc, yc };
+}
+
+function parsePixelList() {
+  return (document.getElementById('pixels').value.trim().split(/\n+/) || [])
+    .map(l => l.split(',').map(s=>s.trim()))
+    .filter(p => p.length===2 && Number.isInteger(+p[0]) && Number.isInteger(+p[1]))
+    .map(p => [+p[0], +p[1]]);
+}
+
+// ── compute maps ──────────────────────────────────────────────────────────────
+async function computeMaps() {
+  if (!dataLoaded) return;
+  setStatus('Computing…');
+
+  const { mask, kept } = buildMask();
+  const grid = buildGrid(mask);
+
+  const nfCv = document.getElementById('nframes-canvas');
+  drawHeat(nfCv, grid.nframes, grid.mapN, grid.mapN);
+  fitCanvas(nfCv, grid.mapN, grid.mapN, 300, 300);
+  drawColorbar(document.getElementById('nframes-colorbar'));
+  document.getElementById('nframes-max-label').textContent = String(Math.max(...grid.nframes));
+
+  const mapsEl = document.getElementById('maps');
+  mapsEl.innerHTML = '';
+  const [ry0, ry1, rx0, rx1] = meta.roi;
+
+  for (const [py, px] of parsePixelList()) {
+    const card = document.createElement('div');
+    card.className = 'map-card';
+
+    if (!(py>=ry0 && py<ry1 && px>=rx0 && px<rx1)) {
+      card.innerHTML = `<div class="map-title">pixel (${py}, ${px})</div><div class="note">Outside ROI [${ry0},${ry1})×[${rx0},${rx1})</div>`;
+      mapsEl.appendChild(card); continue;
+    }
+
+    const series = arrays.roi.roiPixelSeries(py - ry0, px - rx0);
+    const acc = new Float64Array(grid.mapN * grid.mapN);
+    const cnt = new Int32Array(grid.mapN * grid.mapN);
+
+    for (let i=0;i<meta.N;i++) {
+      if (!mask[i]) continue;
+      const b = grid.bins[i]; if (b<0) continue;
+      const v = series[i];    if (!Number.isFinite(v)||isNaN(v)) continue;
+      acc[b] += v; cnt[b]++;
+    }
+
+    const pmap = new Float32Array(grid.mapN * grid.mapN);
+    for (let i=0;i<pmap.length;i++) pmap[i] = cnt[i]>0 ? acc[i]/cnt[i] : NaN;
+
+    const title = document.createElement('div');
+    title.className = 'map-title';
+    title.textContent = `pixel (${py}, ${px})`;
+
+    const cv = document.createElement('canvas');
+    cv.width = 260; cv.height = 260;
+    drawHeat(cv, pmap, grid.mapN, grid.mapN);
+
+    card.appendChild(title);
+    card.appendChild(cv);
+    mapsEl.appendChild(card);
+  }
+
+  setStatus(`Done. kept=${kept}/${meta.N}  filled=${grid.nframes.filter(v=>v>0).length}/${grid.mapN**2}`);
+}
+
+// ── frame browser ─────────────────────────────────────────────────────────────
+async function loadFrameTab() {
+  if (!meta.hasPsf) return;
+  const slider = document.getElementById('frame-slider');
+  const label  = document.getElementById('frame-label');
+  slider.max = String(meta.N - 1); slider.value = '0';
+
+  async function drawFrame(k) {
+    label.textContent = String(k);
+
+    const psf     = arrays.psf.psfFrame(k);
+    const psfCv   = document.getElementById('psf-canvas');
+    const psfCard = psfCv.closest('.card');
+    drawHeat(psfCv, psf.data, psf.w, psf.h);
+    fitCanvas(psfCv, psf.w, psf.h,
+      Math.max(240, (psfCard ? psfCard.clientWidth : window.innerWidth) - 24),
+      Math.max(240, window.innerHeight * 0.55 | 0));
+
+    const roiCv  = document.getElementById('roi-canvas');
+    const roiMsg = document.getElementById('roi-msg');
+    const res    = arrays.roi.roiFrame(k, 6000);
+
+    if (res.tooLarge) {
+      roiMsg.textContent = `ROI is ${res.h}×${res.w} — frame view disabled above ${res.maxPx} pixels.`;
+      drawHeat(roiCv, new Float32Array(256).fill(NaN), 16, 16);
+      applyZoom(16, 16); roiClickState = { enabled:false, w:16, h:16 };
+    } else {
+      const [ry0,ry1,rx0,rx1] = meta.roi;
+      roiMsg.textContent = `Frame ${k}. Click to add a pixel. ROI: y:[${ry0},${ry1}) x:[${rx0},${rx1}).`;
+      drawHeat(roiCv, res.data, res.w, res.h);
+      applyZoom(res.w, res.h); roiClickState = { enabled:true, w:res.w, h:res.h };
+    }
+  }
+
+  slider.oninput = async e => {
+    const k = +e.target.value;
+    setStatus(`Loading frame ${k}…`);
+    await drawFrame(k);
+    setStatus(`Frame ${k} loaded.`);
+  };
+
+  setStatus('Loading frame 0…');
+  await drawFrame(0);
+  setStatus('Frame tab ready.');
+}
+
+// ── ROI zoom & click ──────────────────────────────────────────────────────────
+function applyZoom(w, h) {
+  const s = Math.max(1, Math.min(20, +document.getElementById('roi-zoom').value || 4));
+  const c = document.getElementById('roi-canvas');
+  c.style.width  = `${Math.max(1, w*s|0)}px`;
+  c.style.height = `${Math.max(1, h*s|0)}px`;
+  document.getElementById('roi-zoom-val').textContent = `${s}x`;
+}
+
+function addPixel(py, px) {
+  const ta = document.getElementById('pixels');
+  const line = `${py}, ${px}`;
+  const lines = ta.value.split(/\n+/).map(s=>s.trim()).filter(Boolean);
+  if (lines.includes(line)) { setStatus(`Pixel (${py},${px}) already listed.`); return; }
+  ta.value = lines.length ? ta.value.trim() + '\n' + line : line;
+  setStatus(`Added pixel (${py}, ${px}).`);
+}
+
+// ── wiring ────────────────────────────────────────────────────────────────────
+loadBtn.addEventListener('click', async () => {
+  try { loadBtn.disabled=true; await loadFromUrl(); }
+  catch(e) { setStatus('Error: ' + e.message); }
+  finally { loadBtn.disabled=false; }
+});
+
+fileBtn.addEventListener('click', () => { fileInput.value=''; fileInput.click(); });
+fileInput.addEventListener('change', async e => {
+  const file = e.target.files?.[0]; if (!file) return;
+  try { fileBtn.disabled=true; setProgress(`Reading ${file.name}…`, 0); await loadFromFile(file); }
+  catch(e) { setStatus('Error: ' + e.message); }
+  finally { fileBtn.disabled=false; setProgress(null); }
+});
+
+computeBtn.addEventListener('click', async () => {
+  try { computeBtn.disabled=true; await computeMaps(); }
+  catch(e) { setStatus('Compute error: ' + e.message); }
+  finally { computeBtn.disabled=false; }
+});
+
+
+timeMinSlider.addEventListener('input', () => {
+  if (+timeMinSlider.value > +timeMaxSlider.value) timeMaxSlider.value = timeMinSlider.value;
+  slidersToInputs();
+});
+timeMaxSlider.addEventListener('input', () => {
+  if (+timeMaxSlider.value < +timeMinSlider.value) timeMinSlider.value = timeMaxSlider.value;
+  slidersToInputs();
+});
+timeMinInput.addEventListener('change', inputsToSliders);
+timeMaxInput.addEventListener('change', inputsToSliders);
+
+document.querySelectorAll('.tabbtn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tabbtn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const t = btn.dataset.tab;
+    document.getElementById('map-tab').classList.toggle('active', t==='map-tab');
+    document.getElementById('frame-tab').classList.toggle('active', t==='frame-tab');
+  });
+});
+
+document.getElementById('roi-canvas').addEventListener('click', ev => {
+  if (!roiClickState.enabled) return;
+  const rect = ev.currentTarget.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const lx = Math.floor((ev.clientX - rect.left) / rect.width  * roiClickState.w);
+  const ly = Math.floor((ev.clientY - rect.top)  / rect.height * roiClickState.h);
+  if (lx<0||ly<0||lx>=roiClickState.w||ly>=roiClickState.h) return;
+  const [ry0,,rx0] = meta.roi;
+  addPixel(ry0 + ly, rx0 + lx);
+});
+
+document.getElementById('roi-zoom').addEventListener('input', () => {
+  if (roiClickState.w) applyZoom(roiClickState.w, roiClickState.h);
+});
+
+document.getElementById('pixel-file-btn').addEventListener('click', () => {
+  document.getElementById('pixel-file-input').value = '';
+  document.getElementById('pixel-file-input').click();
+});
+
+document.getElementById('pixel-clear-btn').addEventListener('click', () => {
+  document.getElementById('pixels').value = '';
+  setStatus('Pixel list cleared.');
+});
+
+document.getElementById('pixel-file-input').addEventListener('change', e => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const text = ev.target.result || '';
+    const ta = document.getElementById('pixels');
+    const existing = new Set(ta.value.split(/\n+/).map(s => s.trim()).filter(Boolean));
+    const incoming = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    let added = 0, skipped = 0;
+    for (const line of incoming) {
+      const parts = line.split(/[\s,]+/).filter(Boolean);
+      if (parts.length < 2) continue;
+      if (!Number.isInteger(+parts[0]) || !Number.isInteger(+parts[1])) continue;
+      const normalised = parts[0] + ', ' + parts[1];
+      if (existing.has(normalised)) { skipped++; continue; }
+      existing.add(normalised);
+      ta.value = ta.value ? ta.value.trim() + '\n' + normalised : normalised;
+      added++;
+    }
+    setStatus('Loaded ' + file.name + ': added ' + added + ' pixel(s)' + (skipped ? ', skipped ' + skipped + ' duplicate(s)' : '') + '.');
+  };
+  reader.onerror = () => setStatus('Error reading pixel file.');
+  reader.readAsText(file);
+});
+</script>
+</body>
+</html>
