@@ -1022,53 +1022,113 @@ class SpectrumModel:
 
     def save_spectra_model(self, filename):
         '''
-        Save the spectra model to a file.
+        Save the spectrum model to a single .npz file.
+
+        The file contains the sparse extraction matrix, fiber traces, wavelength
+        map (if built), and the extraction range (xmin, xmax).  Load it back with
+        ``load_spectra_model(filename)`` or the standalone
+        ``specextract.load_spectrum_model(path)`` helper.
 
         Parameters
         ----------
         filename : str
-            Filename to save the model
+            Base filename (without extension).  Written to
+            ``<modelname>/<filename>.npz``.
         '''
-        
+        out_path = os.path.join(self.modelname, filename + '.npz')
+        save_dict = {}
 
+        # Sparse matrix — store CSR components so we can avoid scipy.sparse.save_npz
+        # (which produces a separate npz we cannot extend with other arrays).
         try:
-            from scipy.sparse import save_npz
-            save_npz(self.modelname+'/'+filename+'_matrix.npz', self.A)
-            print("matrix saved to %s" % self.modelname+'/'+filename+'_matrix.npz')
-        except:
-            print("couldn't save the matrix.")
-        
+            A_csr = self.A.tocsr()
+            save_dict['matrix_data']    = A_csr.data
+            save_dict['matrix_indices'] = A_csr.indices
+            save_dict['matrix_indptr']  = A_csr.indptr
+            save_dict['matrix_shape']   = np.array(A_csr.shape)
+        except AttributeError:
+            print("Warning: matrix (A) not found — skipping.")
+
+        # Extraction range
         try:
-            np.save(self.modelname+'/'+filename+'_wavmap.npy', self.wav_map)
-            print("wavmap saved to %s" % self.modelname+'/'+filename+'_wavmap.npy')
-        except:
-            print("couldn't save the wavmap.")
-        
+            save_dict['xmin'] = np.array(self.info['xmin'])
+            save_dict['xmax'] = np.array(self.info['xmax'])
+        except (AttributeError, KeyError):
+            print("Warning: xmin/xmax not found — skipping.")
+
+        # Global detector offset used for trace indexing
+        save_dict['XMIN'] = np.array(self.XMIN)
+
+        # Fiber traces (full XMIN:XMAX range)
         try:
-            np.save(self.modelname+'/'+filename+'_info.npy', self.info)
-            print("info saved to %s" % self.modelname+'/'+filename+'_info.npy')
-        except:
-            print("couldn't save the info.")
+            save_dict['trace_vals'] = np.array(self.trace_vals)
+        except AttributeError:
+            pass  # trace_vals not yet computed — silently skip
+
+        # Wavelength map (optional — only if build_wavelength_solutions was called)
+        try:
+            save_dict['wav_map'] = np.array(self.wav_map)
+        except AttributeError:
+            pass  # not built yet — silently skip
+
+        np.savez(out_path, **save_dict)
+        print(f"Spectrum model saved to {out_path}")
+        print(f"  keys: {list(save_dict.keys())}")
 
 
     def load_spectra_model(self, filename):
+        '''
+        Load a spectrum model saved by ``save_spectra_model``.
 
+        Tries the new single-file format (``<filename>.npz``) first, then falls
+        back to the legacy multi-file format (``<filename>_matrix.npz``,
+        ``<filename>_wavmap.npy``, ``<filename>_info.npy``) for backward
+        compatibility with older saved models.
 
+        Parameters
+        ----------
+        filename : str
+            Base filename (without extension), same as passed to
+            ``save_spectra_model``.
+        '''
+        from scipy.sparse import csr_matrix
+
+        npz_path = os.path.join(self.modelname, filename + '.npz')
+
+        if os.path.exists(npz_path):
+            d = np.load(npz_path, allow_pickle=False)
+            self.A = csr_matrix(
+                (d['matrix_data'], d['matrix_indices'], d['matrix_indptr']),
+                shape=tuple(d['matrix_shape']),
+            )
+            self.info = {
+                'xmin': int(d['xmin']),
+                'xmax': int(d['xmax']),
+            }
+            if 'trace_vals' in d:
+                self.trace_vals = list(d['trace_vals'])
+            if 'wav_map' in d:
+                self.wav_map = d['wav_map']
+            print(f"Model loaded from {npz_path}")
+            print(f"  keys: {list(d.keys())}")
+            return
+
+        # ---- legacy fallback ----
+        print(f"New-format file {npz_path} not found — trying legacy multi-file format.")
         try:
             from scipy.sparse import load_npz
-            self.A = load_npz(self.modelname+'/'+filename+'_matrix.npz')
-        except:
-            print("couldn't load the matrix.")
-
+            self.A = load_npz(self.modelname + '/' + filename + '_matrix.npz')
+        except Exception:
+            print("  couldn't load the matrix.")
         try:
-            self.wav_map = np.load(self.modelname+'/'+filename+'_wavmap.npy')
-        except:
-            print("couldn't load the wavmap.")
-        
+            self.wav_map = np.load(self.modelname + '/' + filename + '_wavmap.npy')
+        except Exception:
+            print("  couldn't load the wavmap.")
         try:
-            self.info = np.load(self.modelname+'/'+filename+'_info.npy', allow_pickle = True)
-        except:
-            print("couldn't load the info.")
-
-        print("model loaded from", self.modelname+'/'+filename)
+            self.info = np.load(
+                self.modelname + '/' + filename + '_info.npy', allow_pickle=True
+            ).item()
+        except Exception:
+            print("  couldn't load the info.")
+        print("Model loaded from", self.modelname + '/' + filename)
 

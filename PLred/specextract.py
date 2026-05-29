@@ -1,52 +1,181 @@
 """
-Spectral extraction bridge: averaged.h5 → coupling_map.fits → CouplingMapModel.
+Spectral extraction: averaged.h5 → coupling_map.fits  OR  raw FITS cube → _spec.fits.
 
-Overview
---------
-`extract_to_coupling_map()` converts the output of `average_to_h5()` into the
-FITS format consumed by `CouplingMapModel(mapdata=...)` in `mapmodel.py`.
+Two extraction modes
+--------------------
+**Mode A — coupling map (averaged H5 → FITS)**
 
-The extraction engine is fully user-supplied via a callable so that visPLred,
-IRPLred, or any future instrument can plug in its own method:
+    extract_to_coupling_map(averaged_h5, extractor, output_fits)
 
-    import functools
-    import PLred.visPLred.spec as spec
+Reads the output of ``average_to_h5()``, extracts a mean spectrum per spatial
+grid bin, and writes the FITS format consumed by ``CouplingMapModel(mapdata=...)``.
 
-    my_extractor = functools.partial(
-        spec.extract_spec_box,
-        traces=traces,
-        boxsize=3,
+**Mode B — time-series spectra (raw FITS cube → _spec.fits)**
+
+    extract_from_fits(input_fits, extractor, dark_fits)
+
+Reads raw science FITS cube(s) with shape ``(Nframes, h, w)``, subtracts a master
+dark, applies the extractor frame-by-frame, and writes ``*_spec.fits`` cubes with
+shape ``(Nframes, nfib, nwav)``.  The input FITS header is duplicated and augmented
+with extraction metadata.
+
+Ready-made extractor factories
+-------------------------------
+    import PLred.specextract as specextract
+
+    # Fixed-aperture box extraction (any instrument)
+    ylocs     = specextract.find_peaks(ref_image, nfib=38, thres=0.1)
+    extractor = specextract.make_simple_extractor(ylocs, width=3)
+
+    # Trace-following box extraction (visPLred / FIRST-PL)
+    traces    = specextract.find_traces(ref_image, nfib=38, ini_ys=ylocs)
+    extractor = specextract.make_trace_extractor(traces, boxsize=3)
+
+    # Optimal extraction with nonlinearity correction (FIRST-PL)
+    extractor = specextract.make_FIRSTPL_extractor(
+        'specmodel/specmodel.npz',        # built by SpectrumModel.save_spectra_model()
+        nonlin_modelfile='nonlin_model.fits',
     )
 
-    extract_to_coupling_map(
-        'averaged.h5',
-        extractor=my_extractor,
-        output_fits='coupling_map.fits',
-    )
+    # Mode A
+    extract_to_coupling_map('averaged.h5', extractor, 'coupling_map.fits')
 
-Output FITS structure (HDU indices match CouplingMapModel(mapdata=...))
------------------------------------------------------------------------
+    # Mode B
+    extract_from_fits(['sci1.fits', 'sci2.fits'], extractor, dark_fits='dark.fits')
+
+Output FITS structure — Mode A (HDU indices match CouplingMapModel(mapdata=...))
+----------------------------------------------------------------------------------
     [0] primary  : (map_n, map_n, nfib, nwav)  mean extracted spectra
     [1] nframes  : (map_n, map_n)               frames per bin
-    [2] reserved : (map_n, map_n, nfib, nwav)   zeros (placeholder for model-load compat)
+    [2] reserved : (map_n, map_n, nfib, nwav)   zeros (placeholder)
     [3] var      : (map_n, map_n, nfib, nwav)   variance of the mean per bin
     [4] normvar  : (map_n, map_n, nfib, nwav)   normalized variance
-    header keywords: XMIN, XMAX, MAP_N (on HDU[0])
+    [5] traces   : (nfib, nx)                   fiber traces (if available)
+    header: XMIN, XMAX, MAP_N, SPEX_* extraction metadata
 
-Variance estimation (three-tier priority)
------------------------------------------
-1. Bootstrap  — if /bootstrap/avg_PLcam exists in the H5 and use_bootstrap=True,
-                the extractor is applied to each bootstrap resample and
-                np.var(resamples, axis=0, ddof=1) gives the variance of the mean.
-2. variance_extractor — user-supplied callable image(ny,nx) → var(nfib,nwav).
-3. Poisson fallback — var = spectra / nframes  (valid for photon-count detectors).
+Output FITS structure — Mode B
+--------------------------------
+    [0] primary  : (Nframes, nfib, nwav)  extracted spectra
+    [1] traces   : (nfib, nx)             fiber traces (if available)
+    header: copied from input + SPEX_* extraction metadata
+
+Variance estimation (Mode A, three-tier priority)
+--------------------------------------------------
+1. Bootstrap  — if /bootstrap/avg_PLcam exists in the H5 and use_bootstrap=True.
+2. variance_extractor — user-supplied callable image → var(nfib, nwav).
+3. Poisson fallback — var = spectra / nframes.
 """
 
+import os
+import datetime
+from types import SimpleNamespace
 import numpy as np
 import h5py
 from astropy.io import fits
 from tqdm import tqdm
 
+
+# ------------------------------------------------------------------
+# Metadata helpers
+# ------------------------------------------------------------------
+
+def _attach_info(func, info):
+    """Attach a metadata dict to an extractor callable for header propagation."""
+    func._info = info
+    return func
+
+
+def _write_extraction_header(header, extractor, extra=None):
+    """Write extractor metadata into a FITS header using HIERARCH keywords."""
+    info = {}
+    if hasattr(extractor, '_info'):
+        info.update({k: v for k, v in extractor._info.items() if k != 'traces'})
+    if extra:
+        info.update(extra)
+
+    header['HIERARCH SPEX DATE'] = datetime.datetime.utcnow().isoformat()[:23]
+    header['HIERARCH SPEX TYPE'] = str(info.pop('extractor', 'unknown'))
+
+    for key, val in info.items():
+        hkey = f'HIERARCH SPEX {key.upper()[:12]}'
+        if isinstance(val, (list, np.ndarray)):
+            s = ','.join(str(v) for v in np.asarray(val).ravel())
+            if len(s) > 65:
+                s = s[:62] + '...'
+            try:
+                header[hkey] = s
+            except Exception:
+                pass
+        elif isinstance(val, (bool, int, float)):
+            try:
+                header[hkey] = val
+            except Exception:
+                pass
+        elif isinstance(val, str):
+            val = val[:65] if len(val) > 65 else val
+            try:
+                header[hkey] = val
+            except Exception:
+                pass
+
+
+def _load_dark(dark_fits):
+    """Load a master dark frame from a FITS file.
+
+    If the file is a cube (Nframes, h, w), the median across frames is returned.
+    """
+    with fits.open(dark_fits) as hdl:
+        dark = hdl[0].data.astype(np.float32)
+    if dark.ndim == 3:
+        dark = np.median(dark, axis=0).astype(np.float32)
+    return dark
+
+
+def load_spectrum_model(model_file):
+    """
+    Load a FIRST-PL spectrum model from a ``.npz`` file saved by
+    ``SpectrumModel.save_spectra_model()``.
+
+    Parameters
+    ----------
+    model_file : str
+        Path to the ``.npz`` model file.
+
+    Returns
+    -------
+    model : SimpleNamespace with attributes:
+        ``A``          — scipy.sparse.csr_matrix, extraction matrix
+        ``xmin``       — int, first detector column included in the matrix
+        ``xmax``       — int, last detector column (exclusive)
+        ``XMIN``       — int, global left edge used when building trace_vals
+        ``trace_vals`` — ndarray (nfib, XMAX-XMIN) or None
+        ``wav_map``    — ndarray (nfib, xmax-xmin) wavelength map, or None
+
+    Notes
+    -----
+    If ``wav_map`` is present, the extractor factories will apply
+    per-fiber wavelength interpolation to a common reference grid
+    (using ``visPLred.spec.interpolate_spectrum``).
+    """
+    from scipy.sparse import csr_matrix
+    d = np.load(model_file, allow_pickle=False)
+    A = csr_matrix(
+        (d['matrix_data'], d['matrix_indices'], d['matrix_indptr']),
+        shape=tuple(d['matrix_shape']),
+    )
+    return SimpleNamespace(
+        A          = A,
+        xmin       = int(d['xmin']),
+        xmax       = int(d['xmax']),
+        XMIN       = int(d['XMIN']) if 'XMIN' in d else 0,
+        trace_vals = d['trace_vals'] if 'trace_vals' in d else None,
+        wav_map    = d['wav_map']    if 'wav_map'    in d else None,
+    )
+
+
+# ------------------------------------------------------------------
+# Mode A — averaged H5 → coupling-map FITS
+# ------------------------------------------------------------------
 
 def extract_to_coupling_map(
     averaged_h5,
@@ -54,6 +183,7 @@ def extract_to_coupling_map(
     output_fits,
     variance_extractor=None,
     use_bootstrap=True,
+    extractor_info=None,
     verbose=True,
 ):
     """
@@ -62,28 +192,29 @@ def extract_to_coupling_map(
     Parameters
     ----------
     averaged_h5 : str
-        Path to the averaged H5 produced by `average_to_h5()`.
+        Path to the averaged H5 produced by ``average_to_h5()``.
     extractor : callable
         ``f(image: ndarray[ny, nx]) -> ndarray[nfib, nwav]``
         Applied to the mean PLcam image of each non-empty grid bin.
-        Configure hyperparameters (traces, box size, regularization, …) via
-        ``functools.partial`` or a closure before passing.
+        Configure hyperparameters via a factory function or closure.
     output_fits : str
         Output path for the coupling-map FITS file (written with overwrite=True).
     variance_extractor : callable, optional
         ``f(image: ndarray[ny, nx]) -> ndarray[nfib, nwav]``
         Returns the variance of the *mean* spectrum for one bin.
-        If None, variance falls back to bootstrap (if available) or Poisson.
+        Falls back to bootstrap (if available) or Poisson if None.
     use_bootstrap : bool
-        If True and ``/bootstrap/avg_PLcam`` exists in the H5, apply extractor
-        to each bootstrap resample and use sample variance as the mean variance.
+        If True and ``/bootstrap/avg_PLcam`` exists in the H5, use bootstrap
+        variance estimate.
+    extractor_info : dict, optional
+        Extra key/value pairs to store in the output FITS header alongside
+        the metadata auto-detected from ``extractor._info``.
     verbose : bool
-        Print progress messages.
 
     Returns
     -------
     str
-        Path to the written FITS file (same as `output_fits`).
+        Path to the written FITS file (same as ``output_fits``).
     """
     # ------------------------------------------------------------------
     # 1. Load averaged H5
@@ -113,7 +244,6 @@ def extract_to_coupling_map(
     # ------------------------------------------------------------------
     # 2. Extract spectra for each grid bin
     # ------------------------------------------------------------------
-    # Probe shape from first non-empty bin
     nfib, nwav = _probe_extractor_shape(extractor, avg_plcam, map_n)
     if verbose:
         print(f"Extractor output shape: nfib={nfib}, nwav={nwav}")
@@ -121,7 +251,6 @@ def extract_to_coupling_map(
     spectra = np.full((map_n, map_n, nfib, nwav), np.nan, dtype=np.float32)
     datavar = np.full_like(spectra, np.nan)
 
-    # Bootstrap spectra buffer (only allocated if needed)
     bs_spectra = None
     if has_bootstrap:
         bs_spectra = np.full((n_bs, map_n, map_n, nfib, nwav), np.nan, dtype=np.float32)
@@ -129,20 +258,13 @@ def extract_to_coupling_map(
     if verbose:
         print("Extracting spectra per grid bin...")
 
-    grid_iter = [
-        (ix, iy)
-        for ix in range(map_n)
-        for iy in range(map_n)
-    ]
+    grid_iter = [(ix, iy) for ix in range(map_n) for iy in range(map_n)]
 
     for ix, iy in tqdm(grid_iter, disable=not verbose, desc="Extracting"):
-        image = avg_plcam[ix, iy]                            # (ny, nx)
+        image = avg_plcam[ix, iy]
         if not np.any(np.isfinite(image)):
-            continue                                         # empty bin → leave NaN
-
+            continue
         spectra[ix, iy] = extractor(image).astype(np.float32)
-
-        # Bootstrap extraction
         if has_bootstrap:
             for k in range(n_bs):
                 bs_image = bs_plcam[k, ix, iy]
@@ -153,7 +275,6 @@ def extract_to_coupling_map(
     # 3. Estimate variance
     # ------------------------------------------------------------------
     if has_bootstrap and bs_spectra is not None:
-        # Variance of the mean = sample variance across resamples
         datavar = np.nanvar(bs_spectra, axis=0, ddof=1).astype(np.float32)
         if verbose:
             print("Variance estimated from bootstrap resamples.")
@@ -166,7 +287,6 @@ def extract_to_coupling_map(
                 continue
             datavar[ix, iy] = variance_extractor(image).astype(np.float32)
     else:
-        # Poisson fallback: var(mean) = mean / nframes
         if verbose:
             print("Variance estimated via Poisson approximation (spectra / nframes).")
         n = nframes[:, :, None, None].astype(np.float32)
@@ -175,10 +295,8 @@ def extract_to_coupling_map(
 
     # ------------------------------------------------------------------
     # 4. Normalized variance
-    #    normdata = data / nansum(data, axis=(0,1))
-    #    var(normdata) = datavar / nansum(data, axis=(0,1))^2
     # ------------------------------------------------------------------
-    spatial_sum = np.nansum(spectra, axis=(0, 1))            # (nfib, nwav)
+    spatial_sum = np.nansum(spectra, axis=(0, 1))
     spatial_sum[spatial_sum == 0] = np.nan
     datanormvar = (datavar / spatial_sum[None, None] ** 2).astype(np.float32)
 
@@ -192,11 +310,12 @@ def extract_to_coupling_map(
     hdu0.header['MAP_N']   = map_n
     hdu0.header['NFIB']    = nfib
     hdu0.header['NWAV']    = nwav
+    hdu0.header['SRC_H5']  = os.path.basename(averaged_h5)
+    _write_extraction_header(hdu0.header, extractor, extra=extractor_info)
 
     hdu1 = fits.ImageHDU(nframes.astype(np.int32))
     hdu1.header['EXTNAME'] = 'nframes'
 
-    # HDU[2]: placeholder so HDU[3] and HDU[4] align with CouplingMapModel indices
     hdu2 = fits.ImageHDU(np.zeros((map_n, map_n, nfib, nwav), dtype=np.float32))
     hdu2.header['EXTNAME'] = 'reserved'
 
@@ -207,156 +326,310 @@ def extract_to_coupling_map(
     hdu4.header['EXTNAME'] = 'normvar'
 
     hdulist = fits.HDUList([hdu0, hdu1, hdu2, hdu3, hdu4])
+
+    # Optional traces HDU
+    traces = None
+    if hasattr(extractor, '_info') and 'traces' in extractor._info:
+        traces = extractor._info['traces']
+    if traces is not None:
+        hdu_tr = fits.ImageHDU(np.asarray(traces, dtype=np.float64))
+        hdu_tr.header['EXTNAME'] = 'TRACES'
+        hdu_tr.header['COMMENT'] = 'Fiber trace y-centers: (nfib, nx)'
+        hdulist.append(hdu_tr)
+
     hdulist.writeto(output_fits, overwrite=True)
 
     if verbose:
         print(f"Coupling map FITS written to: {output_fits}")
         print(f"  spectra shape : {spectra.shape}")
-        valid_bins = np.sum(nframes > 0)
-        print(f"  valid bins    : {valid_bins} / {map_n * map_n}")
+        print(f"  valid bins    : {np.sum(nframes > 0)} / {map_n * map_n}")
+        if traces is not None:
+            print(f"  traces stored : shape {np.asarray(traces).shape}")
 
     return output_fits
 
 
 # ------------------------------------------------------------------
-# Instrument extractor factories
+# Mode B — raw FITS cube(s) → _spec.fits
 # ------------------------------------------------------------------
 
-def make_irplred_extractor(ylocs, width=6, dark=None):
+def extract_from_fits(
+    input_fits,
+    extractor,
+    dark_fits,
+    xmin=None,
+    xmax=None,
+    output_dir=None,
+    output_suffix='_spec',
+    extractor_info=None,
+    traces=None,
+    verbose=True,
+):
     """
-    Build a box extractor for IRPLred data using PLred.IRPLred.spec.extract_spec.
+    Extract spectra from raw FITS cube(s) and write ``*_spec.fits`` files.
+
+    Each input file is expected to contain a data cube of shape
+    ``(Nframes, h, w)``.  A master dark is subtracted from every frame before
+    the extractor is applied.  Output files have shape ``(Nframes, nfib, nwav)``
+    and the input FITS header is duplicated and augmented with extraction
+    metadata.
 
     Parameters
     ----------
-    ylocs : array-like (nfib,)
-        Y-pixel centers of each fiber in the cross-dispersion direction.
-        Typically found with ``IRPLred.spec.locate_spectra()``.
-    width : int
-        Half-width of the extraction box in pixels (default 6).
-    dark : ndarray (ny, nx) or None
-        Dark frame to subtract before extraction. Pass None if dark subtraction
-        was already done upstream (e.g. in ``ingest_to_h5``).
+    input_fits : str or list of str
+        Path(s) to raw science FITS file(s), each with shape ``(Nframes, h, w)``.
+        A single 2-D file ``(h, w)`` is treated as a one-frame cube.
+    extractor : callable
+        ``f(image: ndarray[h, w_roi]) -> ndarray[nfib, nwav]``
+        Applied to each dark-subtracted (and optionally pre-sliced) frame.
+        Use one of the factory functions to get automatic metadata propagation.
+    dark_fits : str or ndarray
+        Path to a dark FITS file (2-D or cube) **or** a pre-loaded 2-D dark
+        array.  If a cube is given, the median frame is used as the master dark.
+        Dark subtraction is mandatory to avoid negative-count artifacts.
+    xmin : int or None
+        First detector column to pass to the extractor.  If None, auto-detected
+        from ``extractor._info['xmin']`` (set by ``make_FIRSTPL_extractor`` and
+        ``make_trace_extractor`` when loaded from a model file).  If neither
+        provides a value, the full frame width is used.
+    xmax : int or None
+        Last detector column (exclusive).  Same auto-detection as ``xmin``.
+    output_dir : str or None
+        Directory for output files.  Defaults to the same directory as each
+        input file.
+    output_suffix : str
+        Suffix appended before ``.fits`` in output filenames (default ``'_spec'``).
+        Example: ``'science_001.fits'`` → ``'science_001_spec.fits'``.
+    extractor_info : dict or None
+        Additional key/value pairs to store in the output FITS header.
+    traces : ndarray (nfib, nx) or None
+        Fiber traces to save as a ``TRACES`` extension HDU.  Auto-detected from
+        ``extractor._info['traces']`` if present.
+    verbose : bool
 
     Returns
     -------
-    callable  f(image: ndarray[ny, nx]) -> ndarray[nfib, nwav]
-
-    Example
-    -------
-    >>> from PLred.IRPLred import spec as irspec
-    >>> import PLred.specextract as specextract
-    >>> ylocs = irspec.locate_spectra(ref_image, num_spec=17, width=3, plot=False)
-    >>> extractor = specextract.make_irplred_extractor(ylocs, width=3)
-    >>> specextract.extract_to_coupling_map('averaged.h5', extractor, 'coupling_map.fits')
-    """
-    from PLred.IRPLred.spec import extract_spec
-    _ylocs = np.asarray(ylocs, dtype=int)
-
-    def _extract(image):
-        im = image - dark if dark is not None else image
-        return extract_spec(im, _ylocs, width=width).astype(np.float32)
-
-    return _extract
-
-
-def make_visplred_extractor(A, dark=None, nonlin_modelfile=None,
-                             var_const=200, thresh=0.1):
-    """
-    Build an optimal extractor for visPLred data.
-
-    Wraps ``PLred.visPLred.spec.extract_spec_optimal`` with optional dark
-    subtraction and per-pixel nonlinearity correction.
-
-    The nonlinearity model is generated by the calibration notebook
-    ``visPLred/tutorials/pre1_nonlinearity_correction.ipynb`` and stored as a
-    FITS file via ``preprocess.model_nonlinearity_from_flats()``.
-
-    Parameters
-    ----------
-    A : scipy.sparse matrix
-        Spectral extraction matrix built from the spectrum model
-        (see ``visPLred/tutorials/pre2_spectrum_model.ipynb``).
-    dark : ndarray (ny, nx) or None
-        Dark frame to subtract. None skips subtraction.
-    nonlin_modelfile : str or None
-        Path to nonlinearity-correction FITS produced by
-        ``preprocess.model_nonlinearity_from_flats()``.
-        None skips nonlinearity correction.
-    var_const : float
-        Variance constant used when no variance image is available (default 200).
-    thresh : float
-        Damping threshold for the regularised extraction (default 0.1).
-
-    Returns
-    -------
-    callable  f(image: ndarray[ny, nx]) -> ndarray[nfib, nwav]
+    list of str
+        Paths to the written ``*_spec.fits`` files, in the same order as
+        ``input_fits``.
 
     Notes
     -----
-    ``extract_spec_optimal`` returns a flat vector of length ``nfib * nwav``.
-    This factory reshapes it to ``(nfib, nwav)`` where ``nwav = image.shape[1]``.
-    Ensure that ``A`` was built for the same ``nfib`` and ``nwav`` dimensions.
+    The output HDU list::
+
+        [0]  PrimaryHDU  shape (Nframes, nfib, nwav)  — extracted spectra
+        [1]  ImageHDU    shape (nfib, nx)              — traces  (if available)
+
+    The header of HDU[0] is a copy of the input primary header with
+    ``NAXIS1/2/3`` updated and ``HIERARCH SPEX *`` keywords added:
+
+        SPEX TYPE  — extractor name (e.g. ``simple_box``)
+        SPEX DATE  — UTC timestamp of extraction
+        SPEX DARK  — dark file path or ``'array'``
+        SPEX *     — any parameter stored by the factory (width, boxsize, …)
 
     Example
     -------
     >>> import PLred.specextract as specextract
-    >>> extractor = specextract.make_visplred_extractor(
-    ...     A               = A,
-    ...     dark            = dark_frame,
-    ...     nonlin_modelfile= 'nonlin_model.fits',
+    >>> ylocs    = specextract.find_peaks(ref_image, nfib=38, thres=0.1)
+    >>> extractor = specextract.make_simple_extractor(ylocs, width=3)
+    >>> out = specextract.extract_from_fits(
+    ...     ['sci_001.fits', 'sci_002.fits'],
+    ...     extractor,
+    ...     dark_fits='master_dark.fits',
     ... )
-    >>> specextract.extract_to_coupling_map('averaged.h5', extractor, 'coupling_map.fits')
+    >>> print(out)
+    ['sci_001_spec.fits', 'sci_002_spec.fits']
     """
-    from PLred.visPLred.spec import extract_spec_optimal
+    if isinstance(input_fits, str):
+        input_fits = [input_fits]
 
-    def _extract(image):
-        im = image - dark if dark is not None else image.copy()
-        if nonlin_modelfile is not None:
-            from PLred.visPLred.preprocess import correct_nonlinearity_map
-            im, _ = correct_nonlinearity_map(im, nonlin_modelfile)
-        spec, _ = extract_spec_optimal(A, im.ravel(), var_const=var_const, thresh=thresh)
-        return spec.reshape(-1, image.shape[1]).astype(np.float32)
+    # ------------------------------------------------------------------
+    # Load master dark
+    # ------------------------------------------------------------------
+    if isinstance(dark_fits, np.ndarray):
+        master_dark = dark_fits.astype(np.float32)
+        if master_dark.ndim == 3:
+            master_dark = np.median(master_dark, axis=0).astype(np.float32)
+        dark_label = 'array'
+    else:
+        if verbose:
+            print(f"Loading dark from: {dark_fits}")
+        master_dark = _load_dark(dark_fits)
+        dark_label = str(dark_fits)
 
-    return _extract
+    if verbose:
+        print(f"Master dark: shape={master_dark.shape}, "
+              f"median={float(np.median(master_dark)):.1f}")
+
+    # Auto-detect traces and xmin/xmax from extractor._info
+    _info = getattr(extractor, '_info', {})
+    if traces is None and 'traces' in _info:
+        traces = _info['traces']
+    if xmin is None:
+        xmin = _info.get('xmin', None)
+    if xmax is None:
+        xmax = _info.get('xmax', None)
+
+    output_paths = []
+
+    for fpath in input_fits:
+        if verbose:
+            print(f"\nProcessing: {fpath}")
+
+        with fits.open(fpath) as hdl:
+            in_hdr = hdl[0].header.copy()
+            cube   = hdl[0].data.astype(np.float32)
+
+        if cube.ndim == 2:
+            cube = cube[None]  # single frame → (1, h, w)
+
+        Nframes, h, w = cube.shape
+
+        if master_dark.shape != (h, w):
+            raise ValueError(
+                f"Dark shape {master_dark.shape} does not match frame shape "
+                f"({h}, {w}) in {fpath}"
+            )
+
+        # Determine column slice for the extractor
+        _xmin = xmin if xmin is not None else 0
+        _xmax = xmax if xmax is not None else w
+
+        if verbose:
+            print(f"  cube shape  : {cube.shape}")
+            if xmin is not None or xmax is not None:
+                print(f"  column slice: [{_xmin}:{_xmax}]  ({_xmax - _xmin} px)")
+
+        def _prep(frame):
+            """Dark-subtract and column-slice a single frame."""
+            return (frame - master_dark)[:, _xmin:_xmax]
+
+        # Probe output shape on first frame
+        test_spec = extractor(_prep(cube[0]))
+        if test_spec.ndim != 2:
+            raise ValueError(
+                f"extractor must return a 2-D array (nfib, nwav), "
+                f"got shape {test_spec.shape}"
+            )
+        nfib, nwav = test_spec.shape
+        if verbose:
+            print(f"  output per frame: ({nfib}, {nwav})")
+            print(f"  extracting {Nframes} frames ...")
+
+        out_cube = np.empty((Nframes, nfib, nwav), dtype=np.float32)
+        out_cube[0] = test_spec.astype(np.float32)
+
+        for i in tqdm(range(1, Nframes), disable=not verbose, desc="  frames"):
+            out_cube[i] = extractor(_prep(cube[i])).astype(np.float32)
+
+        # ------------------------------------------------------------------
+        # Build output header (copy input, update axes, add extraction meta)
+        # ------------------------------------------------------------------
+        out_hdr = in_hdr.copy()
+        out_hdr['NAXIS']  = 3
+        out_hdr['NAXIS1'] = nwav
+        out_hdr['NAXIS2'] = nfib
+        out_hdr['NAXIS3'] = Nframes
+        dark_str = dark_label if len(dark_label) <= 65 else dark_label[-65:]
+        out_hdr['HIERARCH SPEX DARK'] = dark_str
+        out_hdr['HIERARCH SPEX PXMIN'] = _xmin
+        out_hdr['HIERARCH SPEX PXMAX'] = _xmax
+        _write_extraction_header(out_hdr, extractor, extra=extractor_info)
+
+        # ------------------------------------------------------------------
+        # Build output path:  basename_spec.fits
+        # ------------------------------------------------------------------
+        base = os.path.splitext(os.path.basename(fpath))[0]
+        out_name = base + output_suffix + '.fits'
+        if output_dir is not None:
+            out_path = os.path.join(output_dir, out_name)
+        else:
+            out_path = os.path.join(os.path.dirname(os.path.abspath(fpath)), out_name)
+
+        # ------------------------------------------------------------------
+        # Write output FITS
+        # ------------------------------------------------------------------
+        hdu0 = fits.PrimaryHDU(out_cube, header=out_hdr)
+        hdulist = fits.HDUList([hdu0])
+
+        if traces is not None:
+            hdu_tr = fits.ImageHDU(np.asarray(traces, dtype=np.float64))
+            hdu_tr.header['EXTNAME'] = 'TRACES'
+            hdu_tr.header['COMMENT'] = 'Fiber trace y-centers: shape (nfib, nx)'
+            hdulist.append(hdu_tr)
+
+        hdulist.writeto(out_path, overwrite=True)
+        output_paths.append(out_path)
+
+        if verbose:
+            print(f"  written: {out_path}")
+            print(f"  shape: {out_cube.shape}  dtype={out_cube.dtype}")
+            if traces is not None:
+                print(f"  traces stored: shape {np.asarray(traces).shape}")
+
+    return output_paths
+
+
+# ------------------------------------------------------------------
+# Spectral traces and peak finding
+# ------------------------------------------------------------------
+
+
+def locate_spectra(im, num_spec=3, width=6, plot=True, exclude=[0]):
+
+    im_column_stack = np.mean(im, axis=1)
+    for ex in exclude: im_column_stack[ex] = 0
+    ylocs = np.zeros(num_spec, dtype=int)
+
+    for i in range(num_spec):
+        _yloc = np.argmax(im_column_stack)
+        ylocs[i] = int(_yloc)
+        im_column_stack[_yloc - width: _yloc + width] = 0
+
+    if plot:
+        import matplotlib.pyplot as plt
+        plt.imshow(im)
+        for i in range(num_spec):
+            plt.axhspan(ylocs[i] - width, ylocs[i] + width, alpha=0.2, color='white')
+        plt.show()
+
+    ylocs = np.sort(ylocs)
+    return ylocs
 
 
 def find_peaks(image, nfib, thres=0.05, min_dist=6, ref_col=None, plot=False):
     """
     Find fiber peak positions in a detector image using peakutils.
 
-    An alternative to ``IRPLred.spec.locate_spectra()`` — useful when fibers
-    are closely spaced or the iterative max-masking approach misses peaks.
-    Returns a 1-D array of y-pixel centers suitable for passing to
-    ``find_traces(ini_ys=...)``, ``make_irplred_extractor(ylocs=...)``, or
-    ``make_visplred_box_extractor`` via ``find_traces``.
+    An alternative to ``locate_spectra()`` — useful when fibers are closely
+    spaced or the iterative max-masking approach misses peaks.  Returns a 1-D
+    array of y-pixel centers suitable for ``find_traces(ini_ys=...)``,
+    ``make_simple_extractor(ylocs=...)``, or ``make_trace_extractor``.
 
     Parameters
     ----------
     image : ndarray (ny, nx) or (ny,)
         Reference detector image (dark-subtracted) or a 1-D cross-dispersion
-        profile.  If 2-D, the profile is formed by summing the column at
-        ``ref_col``.
+        profile.  If 2-D, the profile at ``ref_col`` is used.
     nfib : int
-        Expected number of fibers.  A ``ValueError`` is raised if peakutils
-        finds a different number — use that as a signal to tune ``thres`` or
-        ``min_dist``.
+        Expected number of fibers.  A ``ValueError`` is raised if a different
+        number is found — use it as a signal to tune ``thres`` or ``min_dist``.
     thres : float
-        Normalised detection threshold for ``peakutils.indexes`` (0–1,
-        relative to the profile maximum).  Lower → detect fainter peaks;
-        raise if spurious peaks appear (default 0.05).
+        Normalised detection threshold for ``peakutils.indexes`` (0–1).
+        Lower → detect fainter peaks; raise if spurious peaks appear.
     min_dist : int
         Minimum pixel separation between peaks (default 6).
     ref_col : int or None
-        Column to use when ``image`` is 2-D.  Defaults to the brightest
-        column (edge columns excluded).
+        Column to use when ``image`` is 2-D.  Defaults to the brightest column
+        (edge columns excluded).
     plot : bool
-        If True, plot the collapsed cross-dispersion profile with a vertical
-        line at each detected peak.
+        If True, plot the cross-dispersion profile with a line at each peak.
 
     Returns
     -------
     ylocs : ndarray (nfib,) int
-        Y-pixel centers of the detected peaks, sorted top-to-bottom.
+        Y-pixel centers of detected peaks, sorted top-to-bottom.
 
     Raises
     ------
@@ -366,9 +639,8 @@ def find_peaks(image, nfib, thres=0.05, min_dist=6, ref_col=None, plot=False):
     Example
     -------
     >>> import PLred.specextract as specextract
-    >>> # as a drop-in for IRPLred.spec.locate_spectra
     >>> ylocs = specextract.find_peaks(avg_plcam[ix, iy], nfib=38, thres=0.1)
-    >>> extractor = specextract.make_irplred_extractor(ylocs, width=3)
+    >>> extractor = specextract.make_simple_extractor(ylocs, width=3)
     >>>
     >>> # or feed into find_traces for curved-trace extraction
     >>> traces = specextract.find_traces(avg_plcam[ix, iy], nfib=38, ini_ys=ylocs)
@@ -423,60 +695,54 @@ def find_traces(image, nfib, trace_width=4, poly_deg=5, ref_col=None,
     """
     Find fiber trace positions across a 2D detector image.
 
-    Starting from initial peak positions at a reference column, this traces
-    each fiber left and right across the detector using subpixel 3-point peak
-    fitting, then fits a polynomial to each raw trace.
+    Starting from initial peak positions at a reference column, traces each
+    fiber left and right using subpixel 3-point peak fitting, then fits a
+    polynomial to each raw trace.
 
-    No neon calibration required — any bright dark-subtracted frame works
-    (a lamp flat, or the average science image from the best-populated grid bin).
+    No neon calibration required — any bright dark-subtracted frame works.
 
     Parameters
     ----------
     image : ndarray (ny, nx)
-        Reference detector image, dark-subtracted.  The brightest frame or an
-        average of many frames gives the most reliable traces.
+        Reference detector image, dark-subtracted.
     nfib : int
         Number of fiber traces to find.
     trace_width : int
-        Half-width of the cross-dispersion search window when tracking from
-        one column to the next (default 4).
+        Half-width of the cross-dispersion search window (default 4).
     poly_deg : int
-        Degree of polynomial fit used to smooth each raw trace (default 5).
+        Polynomial degree for smoothing each raw trace (default 5).
+        Automatically capped at ``max(1, nx // 8)`` to prevent overfitting
+        on short spectral ranges.
     ref_col : int or None
-        Column index used for initial peak finding.  Defaults to the column
-        with the highest total cross-dispersion flux (edge columns excluded).
+        Column for initial peak finding.  Defaults to brightest column
+        (edge columns excluded).
     ini_ys : array-like (nfib,) or None
-        Initial y-pixel guesses for each fiber at ``ref_col``.  When given,
-        automatic peak finding is skipped entirely — useful when you already
-        know roughly where the fibers are (e.g. from a previous run or from
-        ``IRPLred.spec.locate_spectra()``).  The order must match the fiber
-        order you want in the output traces.
+        Initial y-pixel guesses at ``ref_col``.  Skips automatic peak finding
+        when provided — useful with ``locate_spectra()`` or ``find_peaks()``.
     max_jump : float
-        Maximum allowed pixel jump between adjacent columns before the new
-        peak is rejected and the previous position is kept (default 2).
+        Maximum allowed pixel jump between adjacent columns (default 2).
     min_dist : int
-        Minimum distance between fiber peaks at the reference column (default 6).
+        Minimum distance between peaks at reference column (default 6).
         Only used when ``ini_ys`` is None.
     plot : bool
-        If True, overlay the fitted traces on the image.
+        If True, overlay fitted traces on the image.
 
     Returns
     -------
     traces : ndarray (nfib, nx)
         Y-pixel center of each fiber at every spectral column.
-        Ready to pass to ``make_visplred_box_extractor()``.
+        Pass to ``make_trace_extractor()``.
 
     Example
     -------
     >>> import PLred.specextract as specextract
-    >>> # use the brightest grid bin as a reference image
     >>> import h5py, numpy as np
     >>> with h5py.File('averaged.h5') as f:
     ...     avg = f['avg_PLcam'][:]
     ...     nf  = f['metadata/nframes'][:]
     >>> ix, iy = np.unravel_index(np.argmax(nf), nf.shape)
     >>> traces = specextract.find_traces(avg[ix, iy], nfib=38, plot=True)
-    >>> extractor = specextract.make_visplred_box_extractor(traces, boxsize=3)
+    >>> extractor = specextract.make_trace_extractor(traces, boxsize=3)
     """
     from PLred.visPLred.spec import find_multiple_peaks
     try:
@@ -487,8 +753,6 @@ def find_traces(image, nfib, trace_width=4, poly_deg=5, ref_col=None,
 
     ny, nx = image.shape
 
-    # Reference column: brightest column, but avoid the outer 10% of columns
-    # where edge artefacts can produce spurious peaks.
     if ref_col is None:
         margin = max(1, nx // 10)
         col_flux = np.nansum(image, axis=0)
@@ -497,13 +761,10 @@ def find_traces(image, nfib, trace_width=4, poly_deg=5, ref_col=None,
         ref_col = int(np.argmax(col_flux))
     ref_col = int(np.clip(ref_col, 0, nx - 1))
 
-    # Initial peaks at reference column
     if ini_ys is not None:
         ini_ys = np.asarray(ini_ys, dtype=float)
         if len(ini_ys) != nfib:
-            raise ValueError(
-                f"ini_ys has {len(ini_ys)} entries but nfib={nfib}"
-            )
+            raise ValueError(f"ini_ys has {len(ini_ys)} entries but nfib={nfib}")
     else:
         profile = image[:, ref_col].copy()
         profile = np.nan_to_num(profile, nan=0.0)
@@ -513,7 +774,6 @@ def find_traces(image, nfib, trace_width=4, poly_deg=5, ref_col=None,
     raw_trace[:, ref_col] = ini_ys
 
     def _track_direction(x_range, fib_ini_y):
-        """Track one fiber along x_range, returning per-column y positions."""
         ypos = np.full(nx, np.nan)
         yint = int(np.round(fib_ini_y))
         for x in x_range:
@@ -540,9 +800,8 @@ def find_traces(image, nfib, trace_width=4, poly_deg=5, ref_col=None,
 
     for fibind in range(nfib):
         ini_y = ini_ys[fibind]
-        # trace leftward then rightward from ref_col
-        left  = _track_direction(range(ref_col - 1, -1, -1),    ini_y)
-        right = _track_direction(range(ref_col + 1, nx),         ini_y)
+        left  = _track_direction(range(ref_col - 1, -1, -1), ini_y)
+        right = _track_direction(range(ref_col + 1, nx),      ini_y)
         for x in range(ref_col - 1, -1, -1):
             if np.isfinite(left[x]):
                 raw_trace[fibind, x] = left[x]
@@ -550,16 +809,13 @@ def find_traces(image, nfib, trace_width=4, poly_deg=5, ref_col=None,
             if np.isfinite(right[x]):
                 raw_trace[fibind, x] = right[x]
 
-    # Polynomial fit to smooth each trace.
-    # Cap degree so we never use more freedom than ~1 knot per 8 columns —
-    # this prevents overfitting on short spectral ranges (e.g. nx=20 → deg 2).
     effective_deg = min(poly_deg, max(1, nx // 8))
     x_arr  = np.arange(nx)
     traces = np.zeros((nfib, nx), dtype=np.float64)
     for fibind in range(nfib):
         valid = np.isfinite(raw_trace[fibind])
         if valid.sum() < effective_deg + 1:
-            traces[fibind] = raw_trace[fibind]  # not enough points; keep raw
+            traces[fibind] = raw_trace[fibind]
         else:
             coeffs = np.polyfit(x_arr[valid], raw_trace[fibind, valid], deg=effective_deg)
             traces[fibind] = np.polyval(coeffs, x_arr)
@@ -582,65 +838,579 @@ def find_traces(image, nfib, trace_width=4, poly_deg=5, ref_col=None,
     return traces
 
 
-def make_visplred_box_extractor(traces, boxsize=3, dark=None, nonlin_modelfile=None):
-    """
-    Build a trace-following box extractor for visPLred data.
+# ------------------------------------------------------------------
+# Instrument extractor factories
+# ------------------------------------------------------------------
 
-    Wraps ``PLred.visPLred.spec.extract_spec_box``. Unlike
-    ``make_irplred_extractor``, which uses a fixed y-center per fiber, this
-    follows curved fiber traces across the detector — the y-center of each
-    fiber varies with the spectral column x.
+def make_simple_extractor(ylocs, width=6, dark=None):
+    """
+    Build a fixed-aperture box extractor.
+
+    Sums ``±width`` rows around each fixed fiber y-center at every spectral
+    column.  Works for any instrument where fiber traces are approximately
+    horizontal.  Use ``make_trace_extractor`` instead when traces curve
+    significantly across the detector.
 
     Parameters
     ----------
-    traces : ndarray (nfib, nx)
-        Y-pixel center of each fiber at each spectral column, already sliced
-        to match the ``nx`` width of the images in the averaged H5.
-        Typically ``SpectrumModel.trace_vals`` (saved as ``trace_vals.npy``)
-        sliced to the spectral range of your ROI:
-        ``traces[:, xmin - XMIN : xmax - XMIN]``
-    boxsize : int
-        Half-width of the extraction box in pixels (default 3).
+    ylocs : array-like (nfib,)
+        Y-pixel centers of each fiber in the cross-dispersion direction.
+        Typically from ``locate_spectra()``, ``find_peaks()``, or
+        ``IRPLred.spec.locate_spectra()``.
+    width : int
+        Half-width of the extraction box in pixels (default 6).
     dark : ndarray (ny, nx) or None
-        Dark frame to subtract before extraction. None skips subtraction.
-    nonlin_modelfile : str or None
-        Path to nonlinearity-correction FITS from
-        ``visPLred/tutorials/pre1_nonlinearity_correction.ipynb``.
-        None skips nonlinearity correction.
+        Dark frame to subtract before extraction.  Pass None if dark subtraction
+        was already done upstream (e.g. in ``ingest_to_h5``).  When using
+        ``extract_from_fits``, pass ``dark=None`` here and supply the dark via
+        the ``dark_fits`` argument instead.
 
     Returns
     -------
     callable  f(image: ndarray[ny, nx]) -> ndarray[nfib, nwav]
 
-    Notes
-    -----
-    ``traces`` must have the same ``nx`` as the images it will be applied to.
-    If the averaged H5 was built from a cropped detector region ``[xmin, xmax)``,
-    slice the full-detector traces accordingly before passing them here.
+    Example
+    -------
+    >>> import PLred.specextract as specextract
+    >>> ylocs    = specextract.find_peaks(ref_image, nfib=38, thres=0.1)
+    >>> extractor = specextract.make_simple_extractor(ylocs, width=3)
+    >>> specextract.extract_to_coupling_map('averaged.h5', extractor, 'coupling_map.fits')
+    """
+    _ylocs = np.asarray(ylocs, dtype=int)
+
+    def _extract(image):
+        im = image - dark if dark is not None else image
+        return extract_spec(im, _ylocs, width=width).astype(np.float32)
+
+    return _attach_info(_extract, {
+        'extractor': 'simple_box',
+        'width':     width,
+        'ylocs':     _ylocs.tolist(),
+        'has_dark':  dark is not None,
+    })
+
+
+def make_FIRSTPL_extractor(model_file, dark=None, nonlin_modelfile=None,
+                            var_const=200, thresh=0.1):
+    """
+    Build an optimal extractor for FIRST-PL data from a saved spectrum model.
+
+    Loads the extraction matrix (and optionally the wavelength map) from the
+    ``.npz`` file written by ``SpectrumModel.save_spectra_model()``.  If the
+    model includes a wavelength map, each fiber's spectrum is interpolated onto
+    the reference fiber's wavelength grid before being returned.
+
+    The extractor expects a **pre-cropped** image of shape ``(ny, xmax-xmin)``
+    where ``xmin``/``xmax`` come from the model file.  When using
+    ``extract_from_fits``, pass the same ``model_file`` and the function will
+    pre-slice each raw frame automatically.
+
+    Parameters
+    ----------
+    model_file : str
+        Path to the ``.npz`` spectrum model file produced by
+        ``SpectrumModel.save_spectra_model()``
+        (see ``visPLred/tutorials/pre2_spectrum_model.ipynb``).
+    dark : ndarray (ny, nx) or None
+        Dark frame to subtract from the **full** detector image before
+        pre-cropping.  Pass None if dark subtraction is already done upstream.
+        When using ``extract_from_fits`` this is handled by the ``dark_fits``
+        argument instead — leave ``dark=None`` here in that case.
+    nonlin_modelfile : str or None
+        Path to the nonlinearity-correction FITS produced by
+        ``preprocess.model_nonlinearity_from_flats()``.
+        None skips nonlinearity correction.
+    var_const : float
+        Variance constant for the regularised least-squares solver (default 200).
+    thresh : float
+        Damping threshold for regularised extraction (default 0.1).
+
+    Returns
+    -------
+    callable  f(image: ndarray[ny, xmax-xmin]) -> ndarray[nfib, nwav]
+        If ``wav_map`` is present in the model file, ``nwav = xmax - xmin``
+        and spectra are on the reference fiber's wavelength grid.
+        Otherwise ``nwav = xmax - xmin`` in pixel space.
 
     Example
     -------
-    >>> import numpy as np
     >>> import PLred.specextract as specextract
-    >>> # trace_vals shape: (nfib, XMAX-XMIN) from SpectrumModel.trace_spectra()
-    >>> trace_vals = np.load('model/trace_vals.npy')
-    >>> XMIN = 200
-    >>> xmin, xmax = 600, 900          # spectral ROI used in ingest_to_h5
-    >>> traces_roi = trace_vals[:, xmin - XMIN : xmax - XMIN]
-    >>> extractor = specextract.make_visplred_box_extractor(traces_roi, boxsize=3)
+    >>>
+    >>> # Mode A — averaged H5 (images already cropped to xmin:xmax)
+    >>> extractor = specextract.make_FIRSTPL_extractor(
+    ...     'specmodel/specmodel.npz',
+    ...     nonlin_modelfile='nonlin_model.fits',
+    ... )
     >>> specextract.extract_to_coupling_map('averaged.h5', extractor, 'coupling_map.fits')
+    >>>
+    >>> # Mode B — raw FITS cubes (xmin/xmax auto-detected from model)
+    >>> specextract.extract_from_fits(['sci.fits'], extractor, dark_fits='dark.fits')
     """
-    from PLred.visPLred.spec import extract_spec_box
-    _traces = np.asarray(traces, dtype=np.float64)
+    model = load_spectrum_model(model_file)
+    A        = model.A
+    wav_map  = model.wav_map        # (nfib, nwav) or None
+    xmin     = model.xmin
+    xmax     = model.xmax
+    nwav     = xmax - xmin
 
     def _extract(image):
+        # image: (ny, nwav)  — already cropped to xmin:xmax
+        im = image - dark if dark is not None else image.copy()
+        if nonlin_modelfile is not None:
+            from PLred.visPLred.preprocess import correct_nonlinearity_map
+            im, _ = correct_nonlinearity_map(im, nonlin_modelfile)
+        from PLred.visPLred.spec import frame_to_spec
+        spec = frame_to_spec(
+            im, 0, nwav,
+            wavmap     = wav_map,
+            matrix     = A,
+            var_const  = var_const,
+            thresh     = thresh,
+        )
+        return spec.astype(np.float32)
+
+    return _attach_info(_extract, {
+        'extractor':        'FIRSTPL_optimal',
+        'model_file':       str(model_file),
+        'xmin':             xmin,
+        'xmax':             xmax,
+        'var_const':        var_const,
+        'thresh':           thresh,
+        'nonlin_modelfile': str(nonlin_modelfile) if nonlin_modelfile else 'none',
+        'has_dark':         dark is not None,
+        'has_wavmap':       wav_map is not None,
+    })
+
+
+def make_trace_extractor(traces_or_model_file, xmin=None, xmax=None,
+                         boxsize=3, dark=None, nonlin_modelfile=None):
+    """
+    Build a trace-following box extractor.
+
+    Wraps ``PLred.visPLred.spec.extract_spec_box``.  Unlike
+    ``make_simple_extractor``, which uses a fixed y-center per fiber, this
+    follows curved fiber traces across the detector.
+
+    Accepts either a pre-computed traces array **or** a spectrum model file
+    path (the ``.npz`` written by ``SpectrumModel.save_spectra_model()``).
+    When a model file is given, ``trace_vals`` is sliced to ``[xmin, xmax)``
+    automatically, and wavelength interpolation is applied if ``wav_map`` is
+    present in the file.
+
+    Parameters
+    ----------
+    traces_or_model_file : ndarray (nfib, nx) or str
+        Either:
+
+        * An array of shape ``(nfib, nx)`` — y-pixel center of each fiber at
+          each spectral column, already sliced to the extraction ROI.
+          Typically from ``find_traces()`` or ``SpectrumModel.trace_vals``
+          pre-sliced to ``[:, xmin-XMIN : xmax-XMIN]``.
+        * A path (str/Path) to a ``.npz`` spectrum model file.
+          ``trace_vals`` will be loaded and sliced to ``[xmin, xmax)``
+          automatically.
+
+    xmin : int or None
+        First spectral column.  Only used when loading from a model file;
+        defaults to the ``xmin`` stored in the model.
+    xmax : int or None
+        Last spectral column (exclusive).  Only used with a model file;
+        defaults to ``xmax`` from the model.
+    boxsize : int
+        Half-width of the extraction box in pixels (default 3).
+    dark : ndarray (ny, nx) or None
+        Dark frame to subtract.  None skips subtraction.  When using
+        ``extract_from_fits``, pass ``dark=None`` here and supply the dark
+        via ``dark_fits`` instead.
+    nonlin_modelfile : str or None
+        Path to nonlinearity-correction FITS.  None skips correction.
+
+    Returns
+    -------
+    callable  f(image: ndarray[ny, nwav]) -> ndarray[nfib, nwav]
+        Input image must be pre-cropped to the extraction range ``[xmin, xmax)``.
+        ``extract_from_fits`` does this automatically from ``extractor._info``.
+
+    Notes
+    -----
+    The traces array and ``xmin``/``xmax`` are stored in the extractor's
+    ``_info`` dict.  ``extract_from_fits`` uses them to pre-slice each raw
+    frame, and both extraction functions save the traces as a ``TRACES``
+    extension HDU in the output FITS.
+
+    Example
+    -------
+    >>> import PLred.specextract as specextract
+    >>>
+    >>> # from a model file (recommended for FIRST-PL)
+    >>> extractor = specextract.make_trace_extractor(
+    ...     'specmodel/specmodel.npz', boxsize=3,
+    ... )
+    >>> specextract.extract_to_coupling_map('averaged.h5', extractor, 'coupling_map.fits')
+    >>>
+    >>> # from traces computed with find_traces()
+    >>> traces = specextract.find_traces(ref_image, nfib=38, ini_ys=ylocs)
+    >>> extractor = specextract.make_trace_extractor(traces, boxsize=3)
+    """
+    from PLred.visPLred.spec import extract_spec_box
+
+    if isinstance(traces_or_model_file, (str, os.PathLike)):
+        model   = load_spectrum_model(traces_or_model_file)
+        _xmin   = xmin if xmin is not None else model.xmin
+        _xmax   = xmax if xmax is not None else model.xmax
+        _XMIN   = model.XMIN
+        if model.trace_vals is None:
+            raise ValueError(
+                "Model file has no trace_vals.  Run SpectrumModel.trace_spectra() "
+                "before save_spectra_model()."
+            )
+        tv      = np.asarray(model.trace_vals, dtype=np.float64)
+        _traces = tv[:, _xmin - _XMIN : _xmax - _XMIN]
+        wav_map = model.wav_map
+        model_label = str(traces_or_model_file)
+    else:
+        _traces     = np.asarray(traces_or_model_file, dtype=np.float64)
+        _xmin       = xmin
+        _xmax       = xmax
+        wav_map     = None
+        model_label = 'array'
+
+    def _extract(image):
+        # image: (ny, nwav) — already cropped to [xmin, xmax)
         im = image - dark if dark is not None else image
         if nonlin_modelfile is not None:
             from PLred.visPLred.preprocess import correct_nonlinearity_map
             im, _ = correct_nonlinearity_map(im, nonlin_modelfile)
-        return extract_spec_box(_traces, im, boxsize=boxsize).astype(np.float32)
+        spec = extract_spec_box(_traces, im, boxsize=boxsize).astype(np.float32)
+        if wav_map is not None:
+            from PLred.visPLred.spec import interpolate_spectrum
+            spec = interpolate_spectrum(spec, wav_map).astype(np.float32)
+        return spec
 
-    return _extract
+    info = {
+        'extractor':        'trace_box',
+        'model_file':       model_label,
+        'boxsize':          boxsize,
+        'traces_shape':     str(_traces.shape),
+        'nonlin_modelfile': str(nonlin_modelfile) if nonlin_modelfile else 'none',
+        'has_dark':         dark is not None,
+        'has_wavmap':       wav_map is not None,
+        'traces':           _traces,   # stored as FITS HDU, not written to header
+    }
+    if _xmin is not None:
+        info['xmin'] = _xmin
+    if _xmax is not None:
+        info['xmax'] = _xmax
+
+    return _attach_info(_extract, info)
+
+
+# ------------------------------------------------------------------
+# 1-D optimal extraction (instrument-agnostic, Horne 1986 style)
+# ------------------------------------------------------------------
+
+def build_simple_optimal_profile(
+    ref_image,
+    traces,
+    ext_width=8,
+    poly_deg_loc=5,
+    poly_deg_sig=10,
+    plot=False,
+    verbose=True,
+):
+    """
+    Build a per-column Gaussian spatial profile from a reference image.
+
+    For each fiber and each spectral column the cross-dispersion slice is
+    described by a Gaussian.  The Gaussian center (relative to the trace
+    center) and sigma are estimated via weighted moments, then smoothed with
+    polynomials across the spectral axis.  The resulting unit-amplitude
+    profile matrix ``P`` is ready for Horne-style optimal extraction.
+
+    Parameters
+    ----------
+    ref_image : ndarray (ny, nwav)
+        Dark-subtracted reference image.  A high-S/N average frame or the
+        average of the best-populated grid bin works well.  Image must follow
+        the ``(spatial, spectral)`` convention used throughout specextract.
+
+        .. note::
+            If your raw frames are ``(nwav, ny)`` (e.g. the Apapane IR camera),
+            pass ``ref_image.T``.
+
+    traces : ndarray (nfib, nwav)
+        Y-pixel center of each fiber at each spectral column.  From
+        ``find_traces()`` or loaded from a model file.
+    ext_width : int
+        Half-width of the extraction window in pixels (default 8).
+        The profile is evaluated over ``2 * ext_width`` pixels centred on
+        the trace position.
+    poly_deg_loc : int
+        Polynomial degree for smoothing the Gaussian center across the
+        spectral axis (default 5).
+    poly_deg_sig : int
+        Polynomial degree for smoothing the Gaussian sigma across the
+        spectral axis (default 10).
+    plot : bool
+        If True, plot raw and smoothed Gaussian parameters per fiber.
+    verbose : bool
+
+    Returns
+    -------
+    P : ndarray (nfib, nwav, 2*ext_width)
+        Unit-amplitude Gaussian profiles.  ``P[fib, x, k]`` is the value of
+        the profile for fiber ``fib`` at spectral column ``x`` and local
+        cross-dispersion pixel ``k`` (relative to the trace center).
+    smooth_params : ndarray (nfib, nwav, 2)
+        Smoothed ``[center, sigma]`` used to build ``P``.  Column 0 is the
+        Gaussian mean in local coordinates (ideally ≈ ext_width); column 1
+        is sigma in pixels.
+
+    Notes
+    -----
+    Gaussian parameters are estimated from weighted pixel moments (no
+    iterative fitting), so the function runs in seconds even for large
+    images.  The profile is unit-normalised (``amplitude = 1``) because only
+    the *shape* enters the extraction formula.
+
+    Save the result with ``save_simple_optimal_profile()`` and build an
+    extractor with ``make_simple_optimal_extractor()``.
+
+    Example
+    -------
+    >>> import h5py, numpy as np
+    >>> import PLred.specextract as se
+    >>> with h5py.File('averaged.h5') as f:
+    ...     nf  = f['metadata/nframes'][:]
+    ...     avg = f['avg_PLcam'][:]
+    >>> ix, iy = np.unravel_index(np.argmax(nf), nf.shape)
+    >>> ref = avg[ix, iy]
+    >>> ylocs  = se.find_peaks(ref, nfib=3, thres=0.1)
+    >>> traces = se.find_traces(ref, nfib=3, ini_ys=ylocs)
+    >>> P, params = se.build_simple_optimal_profile(ref, traces, ext_width=8, plot=True)
+    >>> se.save_simple_optimal_profile(P, traces, 'profile.npz')
+    >>> extractor = se.make_simple_optimal_extractor('profile.npz')
+    """
+    ny, nwav = ref_image.shape
+    nfib     = traces.shape[0]
+    ext2     = 2 * ext_width
+    local_arr = np.arange(ext2, dtype=np.float64)
+
+    # Raw estimated parameters: [center (local coords), sigma] per fiber per col
+    raw_params = np.full((nfib, nwav, 2), np.nan)
+
+    for fibind in tqdm(range(nfib), disable=not verbose, desc="Fitting profiles"):
+        for x in range(nwav):
+            y_cen = int(np.round(traces[fibind, x]))
+            y0, y1 = y_cen - ext_width, y_cen + ext_width
+            if y0 < 0 or y1 > ny:
+                continue
+            profile = ref_image[y0:y1, x].astype(np.float64)
+            profile = np.clip(profile, 0, None)
+            total = profile.sum()
+            if total <= 0:
+                continue
+            # weighted moment estimates — fast, no iterative fitting needed
+            mean  = float(np.dot(local_arr, profile) / total)
+            var   = float(np.dot((local_arr - mean) ** 2, profile) / total)
+            sigma = max(np.sqrt(var), 0.3)   # floor avoids zero-sigma
+            raw_params[fibind, x, 0] = mean
+            raw_params[fibind, x, 1] = sigma
+
+    # Smooth center and sigma with polynomials across the spectral axis
+    smooth_params = raw_params.copy()
+    x_arr = np.arange(nwav, dtype=np.float64)
+    for fibind in range(nfib):
+        for param_idx, deg in [(0, poly_deg_loc), (1, poly_deg_sig)]:
+            valid = np.isfinite(raw_params[fibind, :, param_idx])
+            eff_deg = min(deg, max(1, valid.sum() // 4))
+            if valid.sum() > eff_deg + 1:
+                coeffs = np.polyfit(x_arr[valid], raw_params[fibind, valid, param_idx],
+                                    deg=eff_deg)
+                smooth_params[fibind, :, param_idx] = np.polyval(coeffs, x_arr)
+
+    if plot:
+        import matplotlib.pyplot as plt
+        fig, axs = plt.subplots(1, 2, figsize=(12, 4))
+        for fibind in range(nfib):
+            axs[0].plot(x_arr, raw_params[fibind, :, 0], alpha=0.3, lw=0.8)
+            axs[0].plot(x_arr, smooth_params[fibind, :, 0], lw=1.5,
+                        label=f'fib {fibind}')
+            axs[1].plot(x_arr, raw_params[fibind, :, 1], alpha=0.3, lw=0.8)
+            axs[1].plot(x_arr, smooth_params[fibind, :, 1], lw=1.5)
+        axs[0].set_title('Gaussian center (local coords)  raw=faint, smooth=solid')
+        axs[1].set_title('Gaussian sigma  raw=faint, smooth=solid')
+        for ax in axs:
+            ax.set_xlabel('spectral column')
+            ax.axhline(ext_width, color='k', lw=0.5, linestyle='--', alpha=0.4)
+        axs[0].legend(fontsize=8)
+        plt.tight_layout()
+        plt.show()
+
+    # Build unit-amplitude profile matrix
+    from astropy.modeling.functional_models import Gaussian1D
+    P = np.zeros((nfib, nwav, ext2), dtype=np.float32)
+    for fibind in range(nfib):
+        mean_arr  = smooth_params[fibind, :, 0]
+        sigma_arr = smooth_params[fibind, :, 1]
+        valid = np.isfinite(mean_arr) & np.isfinite(sigma_arr) & (sigma_arr > 0)
+        for x in np.where(valid)[0]:
+            P[fibind, x] = Gaussian1D(
+                amplitude=1, mean=mean_arr[x], stddev=sigma_arr[x]
+            )(local_arr)
+
+    if verbose:
+        print(f"Profile built: P shape = {P.shape}")
+        frac_valid = np.mean(np.any(P > 0, axis=2))
+        print(f"  valid columns: {frac_valid * 100:.1f}%")
+
+    return P, smooth_params
+
+
+def save_simple_optimal_profile(P, traces, filename, xmin=0):
+    """
+    Save an optimal extraction profile matrix to a ``.npz`` file.
+
+    Parameters
+    ----------
+    P : ndarray (nfib, nwav, 2*ext_width)
+        Profile matrix from ``build_simple_optimal_profile()``.
+    traces : ndarray (nfib, nwav)
+        Fiber trace y-centers (same ``nwav`` as ``P``).
+    filename : str
+        Output path.  ``.npz`` extension added if missing.
+    xmin : int
+        Detector column offset — the spectral column corresponding to index 0
+        in the ``nwav`` axis of ``P``.  Stored so ``make_simple_optimal_extractor``
+        can record it in the output FITS header.
+
+    Example
+    -------
+    >>> se.save_simple_optimal_profile(P, traces, 'profile.npz', xmin=40)
+    """
+    if not str(filename).endswith('.npz'):
+        filename = str(filename) + '.npz'
+    np.savez(
+        filename,
+        P      = np.asarray(P,      dtype=np.float32),
+        traces = np.asarray(traces, dtype=np.float64),
+        xmin   = np.array(xmin, dtype=int),
+    )
+    print(f"Profile saved: {filename}  (P shape {np.asarray(P).shape})")
+
+
+def make_simple_optimal_extractor(P_or_file, dark=None):
+    """
+    Build a 1-D optimal extractor from a pre-built Gaussian profile matrix.
+
+    Applies the Horne (1986) weighted-sum formula per spectral column::
+
+        spec[fib, x] = Σ_k  data[y_cen+k, x] · P[fib, x, k]
+                       ─────────────────────────────────────────
+                             Σ_k  P[fib, x, k]²
+
+    where the sum is over the ``2 * ext_width`` cross-dispersion pixels
+    centred on the trace position ``y_cen = round(traces[fib, x])``.
+
+    Parameters
+    ----------
+    P_or_file : str or tuple (P, traces)
+        * **str/Path**: path to an ``.npz`` file written by
+          ``save_simple_optimal_profile()``.  ``P`` and ``traces`` are
+          loaded automatically.
+        * **tuple**: ``(P_array, traces_array)`` passed directly.
+
+    dark : ndarray (ny, nx) or None
+        Dark frame to subtract before extraction.  When using
+        ``extract_from_fits``, pass ``dark=None`` here and supply the dark
+        via ``dark_fits`` instead.
+
+    Returns
+    -------
+    callable  f(image: ndarray[ny, nwav]) -> ndarray[nfib, nwav]
+        Image must be pre-cropped to the same ``nwav`` columns as ``P``.
+        ``extract_from_fits`` does this automatically if ``xmin`` is stored
+        in the ``.npz`` (set by ``save_simple_optimal_profile``).
+
+    Notes
+    -----
+    The extraction is fully vectorised (no Python loop over spectral columns),
+    so it runs in milliseconds per frame even for large images.
+
+    Example
+    -------
+    >>> import PLred.specextract as se
+    >>> extractor = se.make_simple_optimal_extractor('profile.npz')
+    >>> # Mode A — averaged H5
+    >>> se.extract_to_coupling_map('averaged.h5', extractor, 'coupling_map.fits')
+    >>> # Mode B — raw FITS cubes (xmin auto-detected from profile.npz)
+    >>> se.extract_from_fits(['sci.fits'], extractor, dark_fits='dark.fits')
+    """
+    if isinstance(P_or_file, (str, os.PathLike)):
+        d      = np.load(P_or_file, allow_pickle=False)
+        P      = d['P']
+        traces = d['traces']
+        xmin   = int(d['xmin']) if 'xmin' in d else 0
+        model_label = str(P_or_file)
+    else:
+        P, traces   = P_or_file
+        xmin        = 0
+        model_label = 'array'
+
+    P      = np.asarray(P,      dtype=np.float32)   # (nfib, nwav, 2*ext)
+    traces = np.asarray(traces, dtype=np.float64)    # (nfib, nwav)
+    nfib, nwav, ext2 = P.shape
+    ext_width = ext2 // 2
+
+    # Pre-compute P² sums (nfib, nwav); zero → NaN to avoid divide-by-zero
+    P2_sum = np.sum(P ** 2, axis=2).astype(np.float64)   # (nfib, nwav)
+    P2_sum[P2_sum == 0] = np.nan
+
+    # Offset array for vectorised indexing: shape (2*ext_width,)
+    offsets = np.arange(-ext_width, ext_width, dtype=int)
+
+    def _extract(image):
+        # image: (ny, nwav_roi)
+        im = (image - dark).astype(np.float64) if dark is not None else image.astype(np.float64)
+        ny_im, nx_im = im.shape
+        spec = np.full((nfib, nwav), np.nan, dtype=np.float32)
+
+        for fibind in range(nfib):
+            centers = np.round(traces[fibind]).astype(int)  # (nwav,)
+
+            # y indices for every column: (nwav, 2*ext)
+            y_idx = centers[:, None] + offsets[None, :]
+            x_idx = np.arange(nwav)[:, None] * np.ones(ext2, dtype=int)[None, :]
+
+            # mask out-of-bounds
+            valid_pix = (y_idx >= 0) & (y_idx < ny_im) & (x_idx < nx_im)
+
+            y_safe = np.clip(y_idx, 0, ny_im - 1)
+            x_safe = np.clip(x_idx, 0, nx_im - 1)
+
+            data_crops = im[y_safe, x_safe].astype(np.float32)   # (nwav, 2*ext)
+            P_fib      = P[fibind].copy()                         # (nwav, 2*ext)
+
+            # zero out OOB positions so they contribute nothing
+            data_crops[~valid_pix] = 0.0
+            P_fib[~valid_pix]      = 0.0
+
+            p2 = np.sum(P_fib ** 2, axis=1)
+            p2[p2 == 0] = np.nan
+
+            spec[fibind] = (np.sum(data_crops * P_fib, axis=1) / p2).astype(np.float32)
+
+        return spec
+
+    return _attach_info(_extract, {
+        'extractor':  'simple_optimal',
+        'model_file': model_label,
+        'nfib':       nfib,
+        'nwav':       nwav,
+        'ext_width':  ext_width,
+        'has_dark':   dark is not None,
+        'xmin':       xmin,
+    })
 
 
 # ------------------------------------------------------------------
@@ -661,3 +1431,30 @@ def _probe_extractor_shape(extractor, avg_plcam, map_n):
                     )
                 return result.shape
     raise ValueError("No non-empty bins found in avg_PLcam — cannot determine extractor output shape.")
+
+
+# ------------------------------------------------------------------
+# Low-level box extraction
+# ------------------------------------------------------------------
+
+def extract_spec(im, ylocs, width=6):
+    """
+    Extract spectra from a 2D image at fixed Y apertures.
+
+    Parameters
+    ----------
+    im : ndarray (H, W)
+    ylocs : array-like (nfib,)
+        Y-coordinates of aperture centers.
+    width : int
+        Half-width of extraction box (default 6).
+
+    Returns
+    -------
+    specs : ndarray (nfib, W)
+    """
+    specs = []
+    for yloc in ylocs:
+        spec = np.sum(im[yloc - width: yloc + width, :], axis=0)
+        specs.append(spec)
+    return np.array(specs)
