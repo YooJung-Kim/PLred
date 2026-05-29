@@ -619,7 +619,7 @@ class SpectrumModel:
 
         self.flat_lsf_xcoors = self.lsf_xcoors.flatten()
         self.flat_lsf_ycoors = self.lsf_ycoors.flatten()
-        self.flat_lsf_cutouts = np.reshape(self.lsf_cutouts, newshape=(self.NFIB*self.NWAV, np.shape(self.lsf_cutouts)[2], np.shape(self.lsf_cutouts)[3]))
+        self.flat_lsf_cutouts = np.reshape(self.lsf_cutouts, (self.NFIB*self.NWAV, np.shape(self.lsf_cutouts)[2], np.shape(self.lsf_cutouts)[3]))
 
         # plt.show()
 

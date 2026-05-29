@@ -798,6 +798,7 @@ def average_to_h5(
     pix2mas=16.2,
     n_bootstrap=0,
     time_chunk_minutes=None,
+    plcam_roi=None,
     verbose=False,
 ):
     """
@@ -817,6 +818,14 @@ def average_to_h5(
         Grid centre.
     time_min, time_max : float, optional
         Unix timestamp bounds.
+    plcam_roi : tuple (y0, y1, x0, x1) or None
+        Detector-space pixel bounds of the PLcam frames stored in ``giant_h5``.
+        Required when the camera was configured with a hardware ROI so that the
+        frames are already cropped (i.e. column 0 in the frame ≠ detector
+        column 0).  Stored as ``metadata/plcam_roi`` in the output H5 so that
+        ``extract_to_coupling_map`` can correctly map spectral model coordinates
+        (which are in detector space) to image coordinates.
+        Pass ``None`` (default) if frames are full-detector.
     maxpix_min, maxpix_max : float, optional
         PSF peak bounds.
     pix2mas : float
@@ -843,6 +852,7 @@ def average_to_h5(
             centroids, peaks, timestamps, plcam_type, t0,
             filt_mask, filt_indices,
             maxpix_min, maxpix_max, time_min, time_max, verbose,
+            plcam_roi=plcam_roi,
         )
 
     return _average_one(
@@ -850,6 +860,7 @@ def average_to_h5(
         centroids, peaks, timestamps, plcam_type, t0,
         filt_mask, filt_indices,
         maxpix_min, maxpix_max, time_min, time_max, verbose,
+        plcam_roi=plcam_roi,
     )
 
 
@@ -858,6 +869,7 @@ def _average_one(
     centroids, peaks, timestamps, plcam_type, t0,
     filt_mask, filt_indices,
     maxpix_min, maxpix_max, time_min, time_max, verbose,
+    plcam_roi=None,
 ):
     """Average one time window and write to outpath."""
     n_kept = len(filt_indices)
@@ -949,6 +961,7 @@ def _average_one(
         avg_psf.astype('float32'), avg_pl.astype('float32'),
         boot_avg_pl,
         maxpix_min, maxpix_max, time_min, time_max, n_bootstrap,
+        plcam_roi=plcam_roi,
     )
     return outpath
 
@@ -959,6 +972,7 @@ def _average_chunked(
     centroids, peaks, timestamps, plcam_type, t0,
     filt_mask, filt_indices,
     maxpix_min, maxpix_max, time_min, time_max, verbose,
+    plcam_roi=None,
 ):
     """Split filtered frames into time chunks and write one file per chunk."""
     chunk_sec = time_chunk_minutes * 60.0
@@ -1004,6 +1018,7 @@ def _average_chunked(
             centroids, peaks, timestamps, plcam_type, t0,
             chunk_mask_full, chunk_inds,
             maxpix_min, maxpix_max, chunk_t0, chunk_t1, verbose,
+            plcam_roi=plcam_roi,
         )
         out_paths.append(chunk_path)
 
@@ -1015,6 +1030,7 @@ def _write_averaged_h5(
     xbins, ybins, x_mas, y_mas, nframes, ts_lists,
     avg_psf, avg_pl, boot_avg_pl,
     maxpix_min, maxpix_max, time_min, time_max, n_bootstrap,
+    plcam_roi=None,
 ):
     os.makedirs(os.path.dirname(os.path.abspath(outpath)), exist_ok=True)
     config = {
@@ -1026,6 +1042,9 @@ def _write_averaged_h5(
         't0': t0,
         'write_time': datetime.now().isoformat(),
     }
+    if plcam_roi is not None:
+        config['plcam_roi'] = list(map(int, plcam_roi))
+
     with h5py.File(outpath, 'w') as f:
         f.attrs['map_n']      = map_n
         f.attrs['map_width']  = map_width
@@ -1047,6 +1066,10 @@ def _write_averaged_h5(
         # bin-level timestamps are also relative seconds from t0
         if t0 is not None:
             meta.create_dataset('t0', data=t0, dtype='float64')
+        # Detector-space pixel bounds of the PLcam frames (y0,y1,x0,x1).
+        # Stored so extract_to_coupling_map can align spectral model coordinates.
+        if plcam_roi is not None:
+            meta.create_dataset('plcam_roi', data=np.array(plcam_roi, dtype=np.int32))
 
         f.create_dataset('avg_PSFcam', data=avg_psf, dtype='float32',
                          compression='gzip', compression_opts=4)

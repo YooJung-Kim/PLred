@@ -225,6 +225,13 @@ def extract_to_coupling_map(
         x_mas     = f['metadata/x_mas'][:]                   # (map_n,)
         y_mas     = f['metadata/y_mas'][:]                   # (map_n,)
 
+        # Detector-space pixel bounds of the stored PLcam frames.
+        # Present only when average_to_h5() was called with plcam_roi=.
+        if 'metadata/plcam_roi' in f:
+            plcam_roi = f['metadata/plcam_roi'][:]           # [y0, y1, x0, x1]
+        else:
+            plcam_roi = None
+
         has_bootstrap = use_bootstrap and ('bootstrap/avg_PLcam' in f)
         if has_bootstrap:
             bs_plcam = f['bootstrap/avg_PLcam'][:]           # (n_bs, map_n, map_n, ny, nx)
@@ -238,13 +245,56 @@ def extract_to_coupling_map(
     map_n = avg_plcam.shape[0]
     assert avg_plcam.shape[1] == map_n, "avg_PLcam must be square in spatial dims"
 
+    # ------------------------------------------------------------------
+    # 1b. Resolve image-space column slice from model xmin/xmax + H5 ROI
+    # ------------------------------------------------------------------
+    # Spectral models store coordinates in detector space (e.g. xmin=1100).
+    # If the H5 images are a hardware ROI crop, column 0 in the image
+    # corresponds to detector column x0_roi, so we must convert:
+    #   image_col = det_col - x0_roi
+    _ext_info = getattr(extractor, '_info', {})
+    model_xmin = _ext_info.get('xmin', None)
+    model_xmax = _ext_info.get('xmax', None)
+
+    if model_xmin is not None and model_xmax is not None:
+        roi_x0 = int(plcam_roi[2]) if plcam_roi is not None else 0
+        roi_y0 = int(plcam_roi[0]) if plcam_roi is not None else 0
+        img_xmin = model_xmin - roi_x0
+        img_xmax = model_xmax - roi_x0
+        img_nx   = avg_plcam.shape[3]
+        if img_xmin < 0 or img_xmax > img_nx:
+            raise ValueError(
+                f"Model xmin/xmax ({model_xmin}, {model_xmax}) maps to image columns "
+                f"[{img_xmin}, {img_xmax}] but H5 images have {img_nx} columns "
+                f"(roi_x0={roi_x0}).  Check plcam_roi or model bounds."
+            )
+    else:
+        roi_y0   = 0
+        img_xmin = None
+        img_xmax = None
+
+    def _crop_image(image):
+        """Slice image to model spectral range in image-local coordinates."""
+        if img_xmin is not None:
+            return image[:, img_xmin:img_xmax]
+        return image
+
     if verbose:
         print(f"Loaded {averaged_h5}: map_n={map_n}, avg_PLcam shape={avg_plcam.shape}")
+        if plcam_roi is not None:
+            print(f"  plcam_roi (det): y=[{plcam_roi[0]},{plcam_roi[1]}]  "
+                  f"x=[{plcam_roi[2]},{plcam_roi[3]}]")
+        if img_xmin is not None:
+            print(f"  model xmin/xmax: [{model_xmin},{model_xmax}]  "
+                  f"→ image cols [{img_xmin},{img_xmax}]")
 
     # ------------------------------------------------------------------
     # 2. Extract spectra for each grid bin
     # ------------------------------------------------------------------
-    nfib, nwav = _probe_extractor_shape(extractor, avg_plcam, map_n)
+    # Probe on the cropped image so nfib/nwav reflect actual extractor output
+    nfib, nwav = _probe_extractor_shape(
+        lambda im: extractor(_crop_image(im)), avg_plcam, map_n
+    )
     if verbose:
         print(f"Extractor output shape: nfib={nfib}, nwav={nwav}")
 
@@ -264,12 +314,12 @@ def extract_to_coupling_map(
         image = avg_plcam[ix, iy]
         if not np.any(np.isfinite(image)):
             continue
-        spectra[ix, iy] = extractor(image).astype(np.float32)
+        spectra[ix, iy] = extractor(_crop_image(image)).astype(np.float32)
         if has_bootstrap:
             for k in range(n_bs):
                 bs_image = bs_plcam[k, ix, iy]
                 if np.any(np.isfinite(bs_image)):
-                    bs_spectra[k, ix, iy] = extractor(bs_image).astype(np.float32)
+                    bs_spectra[k, ix, iy] = extractor(_crop_image(bs_image)).astype(np.float32)
 
     # ------------------------------------------------------------------
     # 3. Estimate variance
@@ -285,7 +335,7 @@ def extract_to_coupling_map(
             image = avg_plcam[ix, iy]
             if not np.any(np.isfinite(image)):
                 continue
-            datavar[ix, iy] = variance_extractor(image).astype(np.float32)
+            datavar[ix, iy] = variance_extractor(_crop_image(image)).astype(np.float32)
     else:
         if verbose:
             print("Variance estimated via Poisson approximation (spectra / nframes).")
