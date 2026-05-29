@@ -194,13 +194,13 @@ def _build_grid(centroids, map_n, map_width, xc, yc, pix2mas):
     return xbins, ybins, x_mas, y_mas, xc, yc, xi, yi
 
 
-def _apply_filter(peaks, timestamps, strehl_min, strehl_max, time_min, time_max):
+def _apply_filter(peaks, timestamps, maxpix_min, maxpix_max, time_min, time_max):
     """Boolean mask of frames that pass all filters."""
     mask = np.ones(len(peaks), dtype=bool)
-    if strehl_min is not None:
-        mask &= peaks >= strehl_min
-    if strehl_max is not None:
-        mask &= peaks <= strehl_max
+    if maxpix_min is not None:
+        mask &= peaks >= maxpix_min
+    if maxpix_max is not None:
+        mask &= peaks <= maxpix_max
     if time_min is not None:
         mask &= timestamps >= time_min
     if time_max is not None:
@@ -566,7 +566,7 @@ def explore_grid(
     map_width,
     xc=None, yc=None,
     time_min=None, time_max=None,
-    strehl_min=None, strehl_max=None,
+    maxpix_min=None, maxpix_max=None,
     pix2mas=16.2,
     plcam_pixels=None,
     roi_access_key="plcam/roi_access",
@@ -587,7 +587,7 @@ def explore_grid(
         Grid centre in PSF pixels. Default: sigma-clipped median of centroids.
     time_min, time_max : float, optional
         Unix timestamp bounds for frame selection.
-    strehl_min, strehl_max : float, optional
+    maxpix_min, maxpix_max : float, optional
         PSF peak value bounds.
     pix2mas : float
         Plate scale mas/pixel of PSF camera.
@@ -624,7 +624,7 @@ def explore_grid(
         print("timestamps: [%.3f, %.3f]" % (float(timestamps[0]), float(timestamps[-1])))
 
     # Filter
-    filt_mask = _apply_filter(peaks, timestamps, strehl_min, strehl_max, time_min, time_max)
+    filt_mask = _apply_filter(peaks, timestamps, maxpix_min, maxpix_max, time_min, time_max)
     n_kept = filt_mask.sum()
     print("Frames after filter: %d / %d  (%.1f%%)" % (n_kept, N, 100 * n_kept / N))
 
@@ -794,7 +794,7 @@ def average_to_h5(
     map_width,
     xc=None, yc=None,
     time_min=None, time_max=None,
-    strehl_min=None, strehl_max=None,
+    maxpix_min=None, maxpix_max=None,
     pix2mas=16.2,
     n_bootstrap=0,
     time_chunk_minutes=None,
@@ -817,7 +817,7 @@ def average_to_h5(
         Grid centre.
     time_min, time_max : float, optional
         Unix timestamp bounds.
-    strehl_min, strehl_max : float, optional
+    maxpix_min, maxpix_max : float, optional
         PSF peak bounds.
     pix2mas : float
         Plate scale mas/pixel.
@@ -833,7 +833,7 @@ def average_to_h5(
     """
     centroids, peaks, timestamps, plcam_type, t0 = _load_giant_meta(giant_h5)
 
-    filt_mask = _apply_filter(peaks, timestamps, strehl_min, strehl_max, time_min, time_max)
+    filt_mask = _apply_filter(peaks, timestamps, maxpix_min, maxpix_max, time_min, time_max)
     filt_indices = np.where(filt_mask)[0]
 
     if time_chunk_minutes is not None:
@@ -842,14 +842,14 @@ def average_to_h5(
             pix2mas, n_bootstrap, time_chunk_minutes,
             centroids, peaks, timestamps, plcam_type, t0,
             filt_mask, filt_indices,
-            strehl_min, strehl_max, time_min, time_max, verbose,
+            maxpix_min, maxpix_max, time_min, time_max, verbose,
         )
 
     return _average_one(
         giant_h5, outpath, map_n, map_width, xc, yc, pix2mas, n_bootstrap,
         centroids, peaks, timestamps, plcam_type, t0,
         filt_mask, filt_indices,
-        strehl_min, strehl_max, time_min, time_max, verbose,
+        maxpix_min, maxpix_max, time_min, time_max, verbose,
     )
 
 
@@ -857,7 +857,7 @@ def _average_one(
     giant_h5, outpath, map_n, map_width, xc, yc, pix2mas, n_bootstrap,
     centroids, peaks, timestamps, plcam_type, t0,
     filt_mask, filt_indices,
-    strehl_min, strehl_max, time_min, time_max, verbose,
+    maxpix_min, maxpix_max, time_min, time_max, verbose,
 ):
     """Average one time window and write to outpath."""
     n_kept = len(filt_indices)
@@ -948,7 +948,7 @@ def _average_one(
         xbins, ybins, x_mas, y_mas, nframes, ts_lists,
         avg_psf.astype('float32'), avg_pl.astype('float32'),
         boot_avg_pl,
-        strehl_min, strehl_max, time_min, time_max, n_bootstrap,
+        maxpix_min, maxpix_max, time_min, time_max, n_bootstrap,
     )
     return outpath
 
@@ -958,7 +958,7 @@ def _average_chunked(
     time_chunk_minutes,
     centroids, peaks, timestamps, plcam_type, t0,
     filt_mask, filt_indices,
-    strehl_min, strehl_max, time_min, time_max, verbose,
+    maxpix_min, maxpix_max, time_min, time_max, verbose,
 ):
     """Split filtered frames into time chunks and write one file per chunk."""
     chunk_sec = time_chunk_minutes * 60.0
@@ -1003,7 +1003,7 @@ def _average_chunked(
             giant_h5, chunk_path, map_n, map_width, _xc, _yc, pix2mas, n_bootstrap,
             centroids, peaks, timestamps, plcam_type, t0,
             chunk_mask_full, chunk_inds,
-            strehl_min, strehl_max, chunk_t0, chunk_t1, verbose,
+            maxpix_min, maxpix_max, chunk_t0, chunk_t1, verbose,
         )
         out_paths.append(chunk_path)
 
@@ -1014,13 +1014,13 @@ def _write_averaged_h5(
     outpath, map_n, map_width, xc, yc, pix2mas, plcam_type, t0,
     xbins, ybins, x_mas, y_mas, nframes, ts_lists,
     avg_psf, avg_pl, boot_avg_pl,
-    strehl_min, strehl_max, time_min, time_max, n_bootstrap,
+    maxpix_min, maxpix_max, time_min, time_max, n_bootstrap,
 ):
     os.makedirs(os.path.dirname(os.path.abspath(outpath)), exist_ok=True)
     config = {
         'map_n': map_n, 'map_width': map_width, 'xc': xc, 'yc': yc,
         'pix2mas': pix2mas, 'plcam_type': plcam_type,
-        'strehl_min': strehl_min, 'strehl_max': strehl_max,
+        'maxpix_min': maxpix_min, 'maxpix_max': maxpix_max,
         'time_min': time_min, 'time_max': time_max,
         'n_bootstrap': n_bootstrap,
         't0': t0,
