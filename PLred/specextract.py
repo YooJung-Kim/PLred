@@ -320,7 +320,7 @@ def make_visplred_extractor(A, dark=None, nonlin_modelfile=None,
     return _extract
 
 
-def find_peaks(image, nfib, thres=0.05, min_dist=6, ref_col=None):
+def find_peaks(image, nfib, thres=0.05, min_dist=6, ref_col=None, plot=False):
     """
     Find fiber peak positions in a detector image using peakutils.
 
@@ -349,6 +349,9 @@ def find_peaks(image, nfib, thres=0.05, min_dist=6, ref_col=None):
     ref_col : int or None
         Column to use when ``image`` is 2-D.  Defaults to the brightest
         column (edge columns excluded).
+    plot : bool
+        If True, plot the collapsed cross-dispersion profile with a vertical
+        line at each detected peak.
 
     Returns
     -------
@@ -389,6 +392,24 @@ def find_peaks(image, nfib, thres=0.05, min_dist=6, ref_col=None):
     profile = np.clip(profile, 0, None)
 
     found = peakutils.indexes(profile, thres=thres, min_dist=min_dist)
+
+    if plot:
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots(figsize=(5, max(4, len(profile) / 40)))
+        ax.plot(profile, np.arange(len(profile)), color='steelblue', lw=1)
+        for y in found:
+            ax.axhline(y, color='tomato', lw=0.8, alpha=0.8)
+        ax.invert_yaxis()
+        ax.set_xlabel('Counts')
+        ax.set_ylabel('y pixel')
+        title = f'find_peaks: {len(found)} peaks found'
+        if image.ndim == 2:
+            title += f'  (ref_col={ref_col})'
+        ax.set_title(title)
+        ax.grid(alpha=0.3)
+        plt.tight_layout()
+        plt.show()
+
     if len(found) != nfib:
         raise ValueError(
             f"find_peaks: found {len(found)} peaks (expected {nfib}). "
