@@ -1062,10 +1062,20 @@ async function loadStoreFromSource(source, sourceLabel) {
 async function loadStoreFromUrl() {
   const raw = document.getElementById('zarr-url').value.trim();
   if (!raw) throw new Error('Please enter a Zarr URL');
-  const source = /\.zip(?:$|[?#])/i.test(raw)
-    ? await ZipSource.fromUrl(raw)
-    : new UrlSource(raw);
-  await loadStoreFromSource(source, raw);
+  if (/\.zip(?:$|[?#])/i.test(raw)) {
+    await loadStoreFromSource(await ZipSource.fromUrl(raw), raw);
+    return;
+  }
+
+  const zipCandidate = raw.replace(/\.zarr(?:\/?(?:[?#].*)?)?$/i, '.zarr.zip');
+  try {
+    await loadStoreFromSource(await ZipSource.fromUrl(zipCandidate), zipCandidate);
+    return;
+  } catch (_zipErr) {
+    // Fall back to the directory store if the sibling zip is unavailable.
+  }
+
+  await loadStoreFromSource(new UrlSource(raw), raw);
 }
 
 async function loadStoreFromZipFile(file) {
