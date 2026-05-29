@@ -69,7 +69,7 @@ def make_interpolation_model(normcube, pos_mas, wav_fitrange, wav_reconrange,
 
         map_data = normcube[:,:,specind] # cube[:,:,specind] / np.nansum(cube[:,:,specind])
         weight = 1/variance_map[:,:,specind]
-        idx = ~np.isfinite(map_data)
+        idx = ~np.isfinite(map_data) | ~np.isfinite(weight) | (weight <= 0)
         map_data[idx] = 0
         weight[idx] = 0
 
@@ -190,7 +190,7 @@ def make_interpolation_model_irregular(normcube, points_x, points_y, wav_fitrang
 
         map_data = normcube[:,specind] # cube[:,:,specind] / np.nansum(cube[:,:,specind])
         weight = 1/variance_map[:,specind]
-        idx = ~np.isfinite(map_data)
+        idx = ~np.isfinite(map_data) | ~np.isfinite(weight) | (weight <= 0)
         map_data[idx] = 0
         weight[idx] = 0
 
