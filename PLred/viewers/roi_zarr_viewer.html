@@ -76,6 +76,20 @@ button:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+#load-progress {
+  width: min(32vw, 360px);
+  height: 6px;
+  border-radius: 999px;
+  background: #e8e0d2;
+  overflow: hidden;
+  display: none;
+}
+#load-progress-bar {
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), #2dd4bf);
+  transition: width 120ms linear;
+}
 main {
   display: grid;
   grid-template-columns: 360px 1fr;
@@ -278,6 +292,7 @@ canvas {
   <button id="load-btn">Load Zarr URL</button>
   <button id="zip-btn" class="secondary">Upload .zarr.zip</button>
   <input id="zip-input" type="file" accept=".zip" style="display:none;">
+  <div id="load-progress"><div id="load-progress-bar"></div></div>
   <div id="status">Ready. Load a .zarr or .zarr.zip by URL, or upload a .zarr.zip directly.</div>
 </header>
 
@@ -388,6 +403,8 @@ const summaryEl = document.getElementById('summary');
 const loadBtn = document.getElementById('load-btn');
 const zipBtn = document.getElementById('zip-btn');
 const zipInput = document.getElementById('zip-input');
+const loadProgress = document.getElementById('load-progress');
+const loadProgressBar = document.getElementById('load-progress-bar');
 const computeBtn = document.getElementById('compute-btn');
 const frameBtn = document.getElementById('frame-btn');
 const timeMinInput = document.getElementById('time-min');
@@ -407,6 +424,16 @@ let activeSourceLabel = '';
 let roiClickState = { enabled: false, w: 0, h: 0 };
 
 function setStatus(msg) { statusEl.textContent = msg; }
+function setLoadProgress(msg, fraction = null) {
+  if (msg) statusEl.textContent = msg;
+  if (fraction === null || !Number.isFinite(fraction)) {
+    loadProgress.style.display = 'none';
+    loadProgressBar.style.width = '0%';
+    return;
+  }
+  loadProgress.style.display = 'block';
+  loadProgressBar.style.width = `${Math.max(0, Math.min(100, fraction * 100)).toFixed(1)}%`;
+}
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
 function hhmmssToSeconds(s) {
@@ -578,7 +605,49 @@ function decodeTyped(bytes, dtype, count) {
 async function fetchBytes(url) {
   const r = await fetch(url);
   if (!r.ok) return null;
-  return new Uint8Array(await r.arrayBuffer());
+  if (!r.body || !r.body.getReader) {
+    return new Uint8Array(await r.arrayBuffer());
+  }
+
+  const contentLength = Number(r.headers.get('content-length') || 0) || null;
+  const reader = r.body.getReader();
+  const chunks = [];
+  let received = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.length;
+    if (contentLength) {
+      setLoadProgress(`Downloading ${Math.round((received / contentLength) * 100)}%...`, received / contentLength);
+    } else {
+      setLoadProgress(`Downloading ${(received / 1048576).toFixed(1)} MB...`, null);
+    }
+  }
+
+  const out = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
+function readFileAsArrayBufferWithProgress(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onprogress = (event) => {
+      if (event.lengthComputable) {
+        setLoadProgress(`Reading ${Math.round((event.loaded / event.total) * 100)}%...`, event.loaded / event.total);
+      } else {
+        setLoadProgress(`Reading ${Math.round(event.loaded / 1048576)} MB...`, null);
+      }
+    };
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error('Failed to read file'));
+    reader.readAsArrayBuffer(file);
+  });
 }
 
 async function maybeDecompress(bytes, compressor) {
@@ -735,6 +804,7 @@ class ZipSource {
   }
 
   static async fromZipData(zipData) {
+    setLoadProgress('Parsing zip archive...', null);
     const zip = await JSZip.loadAsync(zipData);
     const entries = new Map();
     Object.keys(zip.files).forEach((k) => {
@@ -757,10 +827,13 @@ class ZipSource {
   }
 
   static async fromFile(file) {
-    return ZipSource.fromZipData(file);
+    const bytes = await readFileAsArrayBufferWithProgress(file);
+    setLoadProgress('Parsing zip archive...', null);
+    return ZipSource.fromZipData(bytes);
   }
 
   static async fromUrl(url) {
+    setLoadProgress('Downloading zip archive...', 0);
     const bytes = await fetchBytes(url);
     if (!bytes) {
       throw new Error('Could not fetch zip file from URL');
@@ -797,15 +870,20 @@ async function loadStoreFromSource(source, sourceLabel) {
   cache.clear();
   activeSourceLabel = sourceLabel;
 
-  setStatus('Loading Zarr metadata...');
+  setLoadProgress('Loading Zarr metadata...', null);
   const rootAttrs = await source.getJson('.zattrs') || {};
 
+  setLoadProgress('Loading roi_access metadata...', null);
   const roi = await openArray(source, 'roi_access');
   if (!roi) throw new Error('roi_access dataset not found');
 
+  setLoadProgress('Loading timestamps...', null);
   const timestamps = await openArray(source, 'timestamps');
+  setLoadProgress('Loading peaks...', null);
   const peaks = await openArray(source, 'peaks');
+  setLoadProgress('Loading centroids...', null);
   const centroids = await openArray(source, 'centroids');
+  setLoadProgress('Loading PSF frames...', null);
   const psf = await openArray(source, 'psf_frames');
 
   store = { rootAttrs, sourceLabel };
@@ -850,6 +928,7 @@ async function loadStoreFromSource(source, sourceLabel) {
 
   computeBtn.disabled = false;
   frameBtn.disabled = !meta.hasPsf;
+  setLoadProgress(null);
   setStatus(`Loaded from ${activeSourceLabel}. Configure filters/grid and click Compute Maps.`);
 }
 
@@ -1173,12 +1252,13 @@ zipInput.addEventListener('change', async (e) => {
   if (!file) return;
   try {
     zipBtn.disabled = true;
-    setStatus(`Reading zip: ${file.name}...`);
+    setLoadProgress(`Reading zip: ${file.name}...`, 0);
     await loadStoreFromZipFile(file);
   } catch (err) {
     setStatus('Zip load error: ' + err.message);
   } finally {
     zipBtn.disabled = false;
+    setLoadProgress(null);
   }
 });
 
