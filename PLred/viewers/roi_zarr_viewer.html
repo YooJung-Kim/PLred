@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PLred ROI Zarr Viewer</title>
+<title>PLred ROI H5 Viewer</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Plus+Jakarta+Sans:wght@400;500;700&display=swap');
 :root {
@@ -327,13 +327,13 @@ canvas {
 </head>
 <body>
 <header>
-  <div class="brand">PLred ROI Zarr Viewer</div>
-  <input id="zarr-url" type="text" style="min-width:420px;" placeholder="http://localhost:8000/timestamp_matching_output/roi_access.zarr.zip">
-  <button id="load-btn">Load .zarr.zip URL</button>
-  <button id="zip-btn" class="secondary">Upload .zarr.zip</button>
-  <input id="zip-input" type="file" accept=".zip" style="display:none;">
+  <div class="brand">PLred ROI H5 Viewer</div>
+  <input id="h5-url" type="text" style="min-width:420px;" placeholder="http://localhost:8000/timestamp_matching_output/roi_access.h5">
+  <button id="load-btn">Load .h5 URL</button>
+  <button id="file-btn" class="secondary">Upload .h5</button>
+  <input id="file-input" type="file" accept=".h5,.hdf5" style="display:none;">
   <div id="load-progress"><div id="load-progress-bar"></div></div>
-  <div id="status">Ready. Load a .zarr.zip by URL, or upload a .zarr.zip directly.</div>
+  <div id="status">Ready. Load a .h5 by URL, or upload a .h5 directly.</div>
 </header>
 
 <main>
@@ -384,7 +384,7 @@ canvas {
         <button id="compute-btn" disabled>Compute Maps</button>
         <button id="frame-btn" class="secondary" disabled>Load Frame Tab</button>
       </div>
-      <div class="note">Frame tab needs psf_frames in Zarr. ROI image preview is only attempted when ROI is small.</div>
+      <div class="note">Frame tab needs psf_frames in H5. ROI image preview is only attempted when ROI is small.</div>
     </div>
   </aside>
 
@@ -452,8 +452,8 @@ canvas {
 const statusEl = document.getElementById('status');
 const summaryEl = document.getElementById('summary');
 const loadBtn = document.getElementById('load-btn');
-const zipBtn = document.getElementById('zip-btn');
-const zipInput = document.getElementById('zip-input');
+const fileBtn = document.getElementById('file-btn');
+const fileInput = document.getElementById('file-input');
 const loadProgress = document.getElementById('load-progress');
 const loadProgressBar = document.getElementById('load-progress-bar');
 const computeBtn = document.getElementById('compute-btn');
@@ -473,6 +473,9 @@ let cache = new Map();
 let gridState = null;
 let activeSourceLabel = '';
 let roiClickState = { enabled: false, w: 0, h: 0 };
+let currentH5File = null;
+let currentH5TempPath = null;
+let h5ModulePromise = null;
 
 function setStatus(msg) { statusEl.textContent = msg; }
 function setLoadProgress(msg, fraction = null) {
@@ -486,6 +489,121 @@ function setLoadProgress(msg, fraction = null) {
   loadProgressBar.style.width = `${Math.max(0, Math.min(100, fraction * 100)).toFixed(1)}%`;
 }
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+async function getH5WasmContext() {
+  if (!h5ModulePromise) {
+    h5ModulePromise = import('https://cdn.jsdelivr.net/npm/h5wasm@latest/dist/esm/hdf5_hl.js').then(async (mod) => {
+      const h5wasm = mod.default;
+      const module = await h5wasm.ready;
+      return { h5wasm, FS: module.FS };
+    });
+  }
+  return h5ModulePromise;
+}
+
+function sanitizeFsName(name) {
+  return String(name || 'roi_access.h5').replace(/[^A-Za-z0-9._-]+/g, '_');
+}
+
+function getAttrValue(attrs, key) {
+  if (!attrs) return null;
+  const entry = attrs[key];
+  if (entry && typeof entry === 'object' && 'value' in entry) return entry.value;
+  return entry ?? null;
+}
+
+function getDatasetOrNull(h5file, path) {
+  try {
+    const obj = h5file.get(path);
+    return obj && obj.value !== undefined ? obj : null;
+  } catch (_err) {
+    return null;
+  }
+}
+
+function makeArrayHandle(data, shape) {
+  return {
+    data,
+    shape,
+    readAll1D() {
+      return data;
+    },
+    readAll2D() {
+      return data;
+    },
+    readRoiPixelSeries(localY, localX) {
+      const n = shape[2];
+      const start = (localY * shape[1] + localX) * n;
+      return data.subarray(start, start + n);
+    },
+    readPsfFrame(frameIdx) {
+      const rows = shape[1];
+      const cols = shape[2];
+      const plane = rows * cols;
+      const start = frameIdx * plane;
+      return { data: data.subarray(start, start + plane), h: rows, w: cols };
+    },
+    readRoiFrame(frameIdx, maxPixels = 6000) {
+      const rows = shape[0];
+      const cols = shape[1];
+      const timeLen = shape[2];
+      if (rows * cols > maxPixels) {
+        return { tooLarge: true, h: rows, w: cols, maxPixels };
+      }
+      const out = new Float32Array(rows * cols);
+      let ptr = 0;
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          out[ptr++] = data[(y * cols + x) * timeLen + frameIdx];
+        }
+      }
+      return { data: out, h: rows, w: cols };
+    },
+  };
+}
+
+function closeCurrentH5() {
+  if (currentH5File) {
+    try {
+      currentH5File.close();
+    } catch (_err) {
+      // ignore close failures on stale handles
+    }
+    currentH5File = null;
+  }
+  if (currentH5TempPath) {
+    getH5WasmContext().then(({ FS }) => {
+      try {
+        if (FS.analyzePath(currentH5TempPath).exists) {
+          FS.unlink(currentH5TempPath);
+        }
+      } catch (_err) {
+        // ignore cleanup failures
+      }
+    }).catch(() => {});
+    currentH5TempPath = null;
+  }
+}
+
+async function openH5FromBytes(bytes, displayName) {
+  const { h5wasm, FS } = await getH5WasmContext();
+  if (!FS.analyzePath('/tmp').exists) {
+    FS.mkdir('/tmp');
+  }
+  const fsPath = `/tmp/${Date.now()}-${sanitizeFsName(displayName)}`;
+  FS.writeFile(fsPath, bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
+  closeCurrentH5();
+  currentH5TempPath = fsPath;
+  currentH5File = new h5wasm.File(fsPath, 'r');
+  return currentH5File;
+}
+
+function arrayShape(data) {
+  if (data && ArrayBuffer.isView(data) && Array.isArray(data.shape)) {
+    return data.shape;
+  }
+  return null;
+}
 
 function hhmmssToSeconds(s) {
   const m = s.match(/^(\d{1,2}):(\d{2}):(\d{2}(?:\.\d+)?)$/);
@@ -863,178 +981,52 @@ function pathCandidates(path) {
   return [...new Set(out.filter(Boolean))];
 }
 
-function bytesToJson(bytes) {
-  const txt = new TextDecoder().decode(bytes);
-  return JSON.parse(txt);
-}
-
-class UrlSource {
-  constructor(baseUrl) {
-    this.baseUrl = baseUrl.replace(/\/$/, '');
-    try {
-      const parsed = new URL(this.baseUrl, window.location.href);
-      this.baseVariants = [parsed.toString().replace(/\/$/, '')];
-      const parts = parsed.pathname.split('/').filter(Boolean);
-      for (let drop = 1; drop <= 2 && parts.length > drop; drop++) {
-        const variant = new URL(parsed.toString());
-        variant.pathname = `/${parts.slice(0, parts.length - drop).join('/')}`;
-        this.baseVariants.push(variant.toString().replace(/\/$/, ''));
-      }
-      this.baseVariants = [...new Set(this.baseVariants)];
-    } catch (_err) {
-      this.baseVariants = [this.baseUrl];
-    }
-  }
-
-  async getBytes(path) {
-    for (const candidate of pathCandidates(path)) {
-      for (const base of this.baseVariants) {
-        const raw = await fetchBytes(`${base}/${candidate}`);
-        if (raw) return raw;
-      }
-    }
-    return null;
-  }
-
-  async getJson(path) {
-    const raw = await this.getBytes(path);
-    if (!raw) return null;
-    return bytesToJson(raw);
-  }
-}
-
-class ZipSource {
-  constructor(entries, rootPrefix) {
-    this.entries = entries;
-    this.rootPrefix = rootPrefix;
-    this.suffixIndex = new Map();
-    for (const key of entries.keys()) {
-      const parts = key.split('/');
-      for (let i = 0; i < parts.length; i++) {
-        const suffix = parts.slice(i).join('/');
-        if (!this.suffixIndex.has(suffix)) {
-          this.suffixIndex.set(suffix, key);
-        }
-      }
-    }
-  }
-
-  static async fromZipData(zipData) {
-    setLoadProgress('Parsing zip archive...', null);
-    const zip = await JSZip.loadAsync(zipData);
-    const entries = new Map();
-    Object.keys(zip.files).forEach((k) => {
-      if (!zip.files[k].dir) entries.set(normPath(k), zip.files[k]);
-    });
-
-    let rootPrefix = '';
-    if (!entries.has('.zattrs')) {
-      const candidates = [];
-      for (const k of entries.keys()) {
-        if (k.endsWith('/.zattrs')) candidates.push(k.slice(0, -('/.zattrs'.length)));
-      }
-      if (!candidates.length) {
-        throw new Error('No .zattrs found in zip. Expected a .zarr store layout.');
-      }
-      candidates.sort((a, b) => a.length - b.length);
-      rootPrefix = candidates[0];
-    }
-    return new ZipSource(entries, rootPrefix);
-  }
-
-  static async fromFile(file) {
-    const bytes = await readFileAsArrayBufferWithProgress(file);
-    setLoadProgress('Parsing zip archive...', null);
-    return ZipSource.fromZipData(bytes);
-  }
-
-  static async fromUrl(url) {
-    setLoadProgress('Downloading zip archive...', 0);
-    const bytes = await fetchBytes(url);
-    if (!bytes) {
-      throw new Error('Could not fetch zip file from URL');
-    }
-    return ZipSource.fromZipData(bytes);
-  }
-
-  resolve(path) {
-    const p = normPath(path);
-    return this.rootPrefix ? `${this.rootPrefix}/${p}` : p;
-  }
-
-  async getBytes(path) {
-    for (const candidate of pathCandidates(path)) {
-      const key = this.resolve(candidate);
-      const file = this.entries.get(key);
-      if (file) {
-        return new Uint8Array(await file.async('uint8array'));
-      }
-      const suffixKey = this.suffixIndex.get(candidate);
-      if (suffixKey) {
-        const suffixFile = this.entries.get(suffixKey);
-        if (suffixFile) {
-          return new Uint8Array(await suffixFile.async('uint8array'));
-        }
-      }
-    }
-    return null;
-  }
-
-  async getJson(path) {
-    const raw = await this.getBytes(path);
-    if (!raw) return null;
-    return bytesToJson(raw);
-  }
-}
-
-async function openArray(source, path) {
-  const zarr = await source.getJson(`${path}/.zarray`);
-  if (!zarr) return null;
-  return new ZarrArrayV2(source, path, zarr);
-}
-
-async function loadStoreFromSource(source, sourceLabel) {
+async function loadStoreFromH5(h5file, sourceLabel) {
   cache.clear();
   activeSourceLabel = sourceLabel;
 
-  setLoadProgress('Loading Zarr metadata...', null);
-  const rootAttrs = await source.getJson('.zattrs') || {};
+  setLoadProgress('Loading H5 metadata...', null);
+  const rootAttrs = h5file.attrs || {};
 
-  setLoadProgress('Loading roi_access metadata...', null);
-  const roi = await openArray(source, 'roi_access');
-  if (!roi) throw new Error('roi_access dataset not found');
+  const roiDs = getDatasetOrNull(h5file, 'roi_access');
+  if (!roiDs) throw new Error('roi_access dataset not found');
+  const timestampsDs = getDatasetOrNull(h5file, 'timestamps');
+  const peaksDs = getDatasetOrNull(h5file, 'peaks');
+  const centroidsDs = getDatasetOrNull(h5file, 'centroids');
+  const psfDs = getDatasetOrNull(h5file, 'psf_frames');
 
-  setLoadProgress('Loading timestamps...', null);
-  const timestamps = await openArray(source, 'timestamps');
-  setLoadProgress('Loading peaks...', null);
-  const peaks = await openArray(source, 'peaks');
-  setLoadProgress('Loading centroids...', null);
-  const centroids = await openArray(source, 'centroids');
-  setLoadProgress('Loading PSF frames...', null);
-  const psf = await openArray(source, 'psf_frames');
-
-  store = { rootAttrs, sourceLabel };
-  arrays = { roi, timestamps, peaks, centroids, psf };
-
-  setStatus('Reading mandatory arrays...');
-  if (!timestamps || !peaks || !centroids) {
-    throw new Error('Required metadata arrays missing. Need timestamps, peaks, centroids in Zarr.');
+  if (!timestampsDs || !peaksDs || !centroidsDs) {
+    throw new Error('Required metadata arrays missing. Need timestamps, peaks, centroids in H5.');
   }
 
-  const ts = await timestamps.readAll1D();
-  const pk = await peaks.readAll1D();
-  const cc = await centroids.readAll2D();
+  setStatus('Reading H5 arrays...');
+  const roiData = roiDs.value;
+  const ts = timestampsDs.value;
+  const pk = peaksDs.value;
+  const cc = centroidsDs.value;
+  const psfData = psfDs ? psfDs.value : null;
+
+  const roiShape = Array.from(roiDs.shape || []);
+  const psfShape = psfDs ? Array.from(psfDs.shape || []) : null;
+
+  arrays = {
+    roi: makeArrayHandle(roiData, roiShape),
+    timestamps: makeArrayHandle(ts, Array.from(timestampsDs.shape || [])),
+    peaks: makeArrayHandle(pk, Array.from(peaksDs.shape || [])),
+    centroids: makeArrayHandle(cc, Array.from(centroidsDs.shape || [])),
+    psf: psfDs ? makeArrayHandle(psfData, psfShape) : null,
+  };
 
   meta = {
     timestamps: ts,
     peaks: pk,
     centroids: cc,
     N: ts.length,
-    roi: rootAttrs.roi || [0, roi.shape[0], 0, roi.shape[1]],
-    t0: rootAttrs.t0,
-    hasPsf: Boolean(psf),
-    roiShape: roi.shape,
-    psfShape: psf ? psf.shape : null,
+    roi: getAttrValue(rootAttrs, 'roi') || [0, roiShape[0], 0, roiShape[1]],
+    t0: getAttrValue(rootAttrs, 't0'),
+    hasPsf: Boolean(psfDs),
+    roiShape,
+    psfShape,
   };
 
   summaryEl.textContent = [
@@ -1060,17 +1052,21 @@ async function loadStoreFromSource(source, sourceLabel) {
 }
 
 async function loadStoreFromUrl() {
-  const raw = document.getElementById('zarr-url').value.trim();
-  if (!raw) throw new Error('Please enter a Zarr URL');
-  if (!/\.zip(?:$|[?#])/i.test(raw)) {
-    throw new Error('Please enter a .zarr.zip URL');
+  const raw = document.getElementById('h5-url').value.trim();
+  if (!raw) throw new Error('Please enter an H5 URL');
+  if (!/\.h5(?:$|[?#])/i.test(raw) && !/\.hdf5(?:$|[?#])/i.test(raw)) {
+    throw new Error('Please enter a .h5 URL');
   }
-  await loadStoreFromSource(await ZipSource.fromUrl(raw), raw);
+  const bytes = await fetchBytes(raw);
+  if (!bytes) throw new Error('Could not fetch H5 file from URL');
+  const h5file = await openH5FromBytes(bytes, raw.split('/').pop() || 'roi_access.h5');
+  await loadStoreFromH5(h5file, raw);
 }
 
-async function loadStoreFromZipFile(file) {
-  const source = await ZipSource.fromFile(file);
-  await loadStoreFromSource(source, file.name);
+async function loadStoreFromFile(file) {
+  const bytes = await readFileAsArrayBufferWithProgress(file);
+  const h5file = await openH5FromBytes(bytes, file.name);
+  await loadStoreFromH5(h5file, file.name);
 }
 
 function readNum(id) {
@@ -1377,22 +1373,22 @@ timeMaxSlider.addEventListener('input', () => {
 timeMinInput.addEventListener('change', syncSlidersFromInputs);
 timeMaxInput.addEventListener('change', syncSlidersFromInputs);
 
-zipBtn.addEventListener('click', () => {
-  zipInput.value = '';
-  zipInput.click();
+fileBtn.addEventListener('click', () => {
+  fileInput.value = '';
+  fileInput.click();
 });
 
-zipInput.addEventListener('change', async (e) => {
+fileInput.addEventListener('change', async (e) => {
   const file = e.target.files && e.target.files[0];
   if (!file) return;
   try {
-    zipBtn.disabled = true;
-    setLoadProgress(`Reading zip: ${file.name}...`, 0);
-    await loadStoreFromZipFile(file);
+    fileBtn.disabled = true;
+    setLoadProgress(`Reading H5: ${file.name}...`, 0);
+    await loadStoreFromFile(file);
   } catch (err) {
-    setStatus('Zip load error: ' + err.message);
+    setStatus('H5 load error: ' + err.message);
   } finally {
-    zipBtn.disabled = false;
+    fileBtn.disabled = false;
     setLoadProgress(null);
   }
 });
