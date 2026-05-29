@@ -1076,20 +1076,40 @@ def make_FIRSTPL_extractor(model_file, plcam_roi=None, dark=None,
     ny_full = model.ny_full
     nfib    = A.shape[0] // nwav
 
-    # Precompute image-space column slice and y-offset from detector-space ROI
+    # ------------------------------------------------------------------
+    # If plcam_roi is given, trim the matrix to the overlap of [xmin,xmax)
+    # and [roi_x0, roi_x1).  The model was built on full-detector frames, so
+    # xmin/xmax are in detector coordinates.  The stored ROI images only cover
+    # [roi_x0, roi_x1) — columns outside that range simply don't exist and must
+    # be excluded from the matrix rather than zero-padded.
+    # ------------------------------------------------------------------
     if plcam_roi is not None:
-        _roi_y0  = int(plcam_roi[0])
-        _roi_x0  = int(plcam_roi[2])
-        _img_xmin = xmin - _roi_x0
-        _img_xmax = xmax - _roi_x0
-        if _img_xmin < 0 or _img_xmax <= _img_xmin:
-            raise ValueError(
-                f"Model xmin/xmax ({xmin}, {xmax}) gives image columns "
-                f"[{_img_xmin}, {_img_xmax}] with roi_x0={_roi_x0}. "
-                f"Check that the model spectral range is within plcam_roi."
+        _roi_y0 = int(plcam_roi[0])
+        _roi_x0 = int(plcam_roi[2])
+        _roi_x1 = int(plcam_roi[3])
+
+        A, _new_xmin, _new_xmax = _trim_matrix_to_roi(
+            A, xmin, xmax, ny_full, _roi_x0, _roi_x1
+        )
+        _nwav = _new_xmax - _new_xmin
+        _nfib = A.shape[0] // _nwav
+
+        # Image-space columns for the trimmed spectral range
+        _img_xmin = _new_xmin - _roi_x0
+        _img_xmax = _new_xmax - _roi_x0
+
+        if _new_xmin != xmin or _new_xmax != xmax:
+            print(
+                f"make_FIRSTPL_extractor: model range [{xmin},{xmax}) trimmed to "
+                f"[{_new_xmin},{_new_xmax}) to match plcam_roi x=[{_roi_x0},{_roi_x1}). "
+                f"Output nwav={_nwav} (was {nwav})."
             )
     else:
         _roi_y0   = 0
+        _new_xmin = xmin
+        _new_xmax = xmax
+        _nwav     = nwav
+        _nfib     = nfib
         _img_xmin = xmin    # assume full-detector input
         _img_xmax = xmax
 
@@ -1099,29 +1119,34 @@ def make_FIRSTPL_extractor(model_file, plcam_roi=None, dark=None,
             from PLred.visPLred.preprocess import correct_nonlinearity_map
             im, _ = correct_nonlinearity_map(im, nonlin_modelfile)
 
-        # 1. X-slice to model spectral range
-        im = im[:, _img_xmin:_img_xmax].astype(np.float32)  # (ny_img, nwav)
+        # 1. X-slice to trimmed spectral range (image-local coordinates)
+        im = im[:, _img_xmin:_img_xmax].astype(np.float32)   # (ny_img, _nwav)
 
-        # 2. Y-embed ROI crop into full-detector height
+        # 2. Y-embed ROI crop to full detector height
         ny_img = im.shape[0]
         if ny_img < ny_full:
-            full = np.zeros((ny_full, nwav), dtype=np.float32)
+            full = np.zeros((ny_full, _nwav), dtype=np.float32)
             full[_roi_y0 : _roi_y0 + ny_img, :] = im
             im = full
 
         from PLred.visPLred.spec import extract_spec_optimal, interpolate_spectrum, flatten_im
-        imvec = flatten_im(im, 0, nwav)
+        imvec = flatten_im(im, 0, _nwav)
         spec_flat, _ = extract_spec_optimal(A, imvec, var_const=var_const, thresh=thresh)
-        spec = spec_flat.reshape(nfib, nwav)
+        spec = spec_flat.reshape(_nfib, _nwav)
         if wav_map is not None:
-            spec = interpolate_spectrum(spec, wav_map)
+            # Slice wav_map to trimmed spectral range if needed
+            _wm = wav_map[:, _new_xmin - xmin : _new_xmax - xmin] \
+                  if (wav_map is not None and _nwav != nwav) else wav_map
+            spec = interpolate_spectrum(spec, _wm)
         return spec.astype(np.float32)
 
     return _attach_info(_extract, {
         'extractor':        'FIRSTPL_optimal',
         'model_file':       str(model_file),
-        'xmin':             xmin,
-        'xmax':             xmax,
+        'xmin':             _new_xmin,   # effective range after trimming
+        'xmax':             _new_xmax,
+        'xmin_model':       xmin,        # original model range (for reference)
+        'xmax_model':       xmax,
         'ny_full':          ny_full,
         'plcam_roi':        list(plcam_roi) if plcam_roi is not None else None,
         'var_const':        var_const,
@@ -1566,6 +1591,69 @@ def make_simple_optimal_extractor(P_or_file, dark=None):
 # ------------------------------------------------------------------
 # Internal helpers
 # ------------------------------------------------------------------
+
+def _trim_matrix_to_roi(A, xmin, xmax, ny_full, roi_x0, roi_x1):
+    """
+    Trim a spectral extraction matrix to the overlap of the model range and the ROI.
+
+    The matrix ``A`` was built for detector columns ``[xmin, xmax)`` with full
+    detector height ``ny_full``.  When the stored PLcam frames only cover
+    detector columns ``[roi_x0, roi_x1)``, the matrix must be reduced so it
+    only uses columns that actually exist in the image.
+
+    Parameters
+    ----------
+    A : scipy.sparse matrix
+        Shape ``(nfib * nwav, ny_full * nwav)`` where ``nwav = xmax - xmin``.
+    xmin, xmax : int
+        Spectral range the original matrix was built for (detector coords).
+    ny_full : int
+        Full detector height (rows of the original matrix).
+    roi_x0, roi_x1 : int
+        Detector-space column bounds of the stored PLcam frames.
+
+    Returns
+    -------
+    A_trimmed : scipy.sparse.csr_matrix
+        Shape ``(nfib * new_nwav, ny_full * new_nwav)`` where
+        ``new_nwav = min(xmax, roi_x1) - max(xmin, roi_x0)``.
+    new_xmin, new_xmax : int
+        Overlap range (detector coords).  The output spectrum covers these
+        columns only.  May be narrower than the original ``[xmin, xmax)``.
+    """
+    nwav_orig = xmax - xmin
+    nfib      = A.shape[0] // nwav_orig
+
+    new_xmin = max(xmin, roi_x0)
+    new_xmax = min(xmax, roi_x1)
+    if new_xmax <= new_xmin:
+        raise ValueError(
+            f"Model range [{xmin}, {xmax}) has no overlap with "
+            f"ROI x=[{roi_x0}, {roi_x1}). Cannot extract spectra."
+        )
+
+    if new_xmin == xmin and new_xmax == xmax:
+        return A.tocsr(), xmin, xmax   # nothing to trim
+
+    new_nwav    = new_xmax - new_xmin
+    x_rel_start = new_xmin - xmin      # offset into original nwav axis
+    x_rel_end   = new_xmax - xmin
+
+    x_rels = np.arange(x_rel_start, x_rel_end)   # (new_nwav,)
+
+    # Row indices: fiber × spectral-channel block structure
+    fib_arr  = np.arange(nfib)
+    row_inds = (fib_arr[:, None] * nwav_orig + x_rels[None, :]).ravel()
+
+    # Col indices: y × spectral-channel block structure
+    y_arr    = np.arange(ny_full)
+    col_inds = (y_arr[:, None] * nwav_orig + x_rels[None, :]).ravel()
+
+    A_csr     = A.tocsr()
+    A_trimmed = A_csr[row_inds][:, col_inds]
+
+    return A_trimmed, new_xmin, new_xmax
+
 
 def _probe_extractor_shape(extractor, avg_plcam, map_n):
     """Run extractor on the first non-empty bin to determine (nfib, nwav)."""
