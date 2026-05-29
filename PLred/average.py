@@ -890,6 +890,10 @@ def _average_one(
         psfcam_h, psfcam_w = psfframes_all.shape[1], psfframes_all.shape[2]
         plcam_key = 'plcam/frames' if plcam_type == 'raw' else 'plcam/spectra'
         plcam_shape = f[plcam_key].shape   # (N, ny, nx) or (N, Nlambda, Nport)
+        # Propagate dark-subtraction flag from ingest step
+        dark_subtracted = bool(f.attrs.get('plcam_dark_subtracted', None))
+        dark_source     = str(f['plcam'].attrs.get('dark_source', 'unknown')) \
+                          if 'plcam' in f else 'unknown'
 
     plcam_dims = plcam_shape[1:]  # (ny, nx) or (Nlambda, Nport)
 
@@ -962,6 +966,8 @@ def _average_one(
         boot_avg_pl,
         maxpix_min, maxpix_max, time_min, time_max, n_bootstrap,
         plcam_roi=plcam_roi,
+        dark_subtracted=dark_subtracted,
+        dark_source=dark_source,
     )
     return outpath
 
@@ -1031,6 +1037,8 @@ def _write_averaged_h5(
     avg_psf, avg_pl, boot_avg_pl,
     maxpix_min, maxpix_max, time_min, time_max, n_bootstrap,
     plcam_roi=None,
+    dark_subtracted=None,
+    dark_source=None,
 ):
     os.makedirs(os.path.dirname(os.path.abspath(outpath)), exist_ok=True)
     config = {
@@ -1041,6 +1049,8 @@ def _write_averaged_h5(
         'n_bootstrap': n_bootstrap,
         't0': t0,
         'write_time': datetime.now().isoformat(),
+        'dark_subtracted': dark_subtracted,
+        'dark_source': dark_source,
     }
     if plcam_roi is not None:
         config['plcam_roi'] = list(map(int, plcam_roi))
@@ -1053,7 +1063,12 @@ def _write_averaged_h5(
         f.attrs['pix2mas']    = pix2mas
         f.attrs['plcam_type'] = plcam_type
         if t0 is not None:
-            f.attrs['t0'] = t0   # absolute Unix timestamp of first frame
+            f.attrs['t0'] = t0
+        # Propagated from ingest — fast flag for specextract without JSON parsing
+        if dark_subtracted is not None:
+            f.attrs['plcam_dark_subtracted'] = dark_subtracted
+        if dark_source is not None:
+            f.attrs['dark_source'] = dark_source
 
         meta = f.create_group('metadata')
         meta.create_dataset('config',  data=json.dumps(config))
@@ -1063,7 +1078,6 @@ def _write_averaged_h5(
         meta.create_dataset('y_mas',   data=y_mas,   dtype='float64')
         meta.create_dataset('nframes', data=nframes, dtype='int32')
         meta.create_dataset('timestamps', data=json.dumps(ts_lists))
-        # bin-level timestamps are also relative seconds from t0
         if t0 is not None:
             meta.create_dataset('t0', data=t0, dtype='float64')
         # Detector-space pixel bounds of the PLcam frames (y0,y1,x0,x1).

@@ -232,6 +232,10 @@ def extract_to_coupling_map(
         else:
             plcam_roi = None
 
+        # Dark-subtraction flag propagated from ingest_to_h5
+        h5_dark_subtracted = f.attrs.get('plcam_dark_subtracted', None)
+        h5_dark_source     = str(f.attrs.get('dark_source', 'unknown'))
+
         has_bootstrap = use_bootstrap and ('bootstrap/avg_PLcam' in f)
         if has_bootstrap:
             bs_plcam = f['bootstrap/avg_PLcam'][:]           # (n_bs, map_n, map_n, ny, nx)
@@ -279,8 +283,26 @@ def extract_to_coupling_map(
             return image[:, img_xmin:img_xmax]
         return image
 
+    # Warn if the extractor will double-subtract or skip dark
+    extractor_has_dark = _ext_info.get('has_dark', False)
+    if h5_dark_subtracted is not None:
+        if h5_dark_subtracted and extractor_has_dark:
+            print(
+                f"WARNING: Dark was already subtracted during ingest "
+                f"(source: {h5_dark_source}) AND the extractor also applies a dark. "
+                f"This will double-subtract the dark. Pass dark=None to the extractor factory."
+            )
+        elif not h5_dark_subtracted and not extractor_has_dark:
+            print(
+                f"WARNING: Dark was NOT subtracted during ingest and the extractor "
+                f"has no dark. Consider passing a dark frame to the extractor factory "
+                f"or re-running ingest with plcam_dark=."
+            )
+
     if verbose:
+        ds_str = f"dark_subtracted={h5_dark_subtracted} (source: {h5_dark_source})"
         print(f"Loaded {averaged_h5}: map_n={map_n}, avg_PLcam shape={avg_plcam.shape}")
+        print(f"  {ds_str}")
         if plcam_roi is not None:
             print(f"  plcam_roi (det): y=[{plcam_roi[0]},{plcam_roi[1]}]  "
                   f"x=[{plcam_roi[2]},{plcam_roi[3]}]")
