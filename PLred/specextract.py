@@ -320,6 +320,308 @@ def make_visplred_extractor(A, dark=None, nonlin_modelfile=None,
     return _extract
 
 
+def find_peaks(image, nfib, thres=0.05, min_dist=6, ref_col=None):
+    """
+    Find fiber peak positions in a detector image using peakutils.
+
+    An alternative to ``IRPLred.spec.locate_spectra()`` — useful when fibers
+    are closely spaced or the iterative max-masking approach misses peaks.
+    Returns a 1-D array of y-pixel centers suitable for passing to
+    ``find_traces(ini_ys=...)``, ``make_irplred_extractor(ylocs=...)``, or
+    ``make_visplred_box_extractor`` via ``find_traces``.
+
+    Parameters
+    ----------
+    image : ndarray (ny, nx) or (ny,)
+        Reference detector image (dark-subtracted) or a 1-D cross-dispersion
+        profile.  If 2-D, the profile is formed by summing the column at
+        ``ref_col``.
+    nfib : int
+        Expected number of fibers.  A ``ValueError`` is raised if peakutils
+        finds a different number — use that as a signal to tune ``thres`` or
+        ``min_dist``.
+    thres : float
+        Normalised detection threshold for ``peakutils.indexes`` (0–1,
+        relative to the profile maximum).  Lower → detect fainter peaks;
+        raise if spurious peaks appear (default 0.05).
+    min_dist : int
+        Minimum pixel separation between peaks (default 6).
+    ref_col : int or None
+        Column to use when ``image`` is 2-D.  Defaults to the brightest
+        column (edge columns excluded).
+
+    Returns
+    -------
+    ylocs : ndarray (nfib,) int
+        Y-pixel centers of the detected peaks, sorted top-to-bottom.
+
+    Raises
+    ------
+    ValueError
+        If the number of detected peaks differs from ``nfib``.
+
+    Example
+    -------
+    >>> import PLred.specextract as specextract
+    >>> # as a drop-in for IRPLred.spec.locate_spectra
+    >>> ylocs = specextract.find_peaks(avg_plcam[ix, iy], nfib=38, thres=0.1)
+    >>> extractor = specextract.make_irplred_extractor(ylocs, width=3)
+    >>>
+    >>> # or feed into find_traces for curved-trace extraction
+    >>> traces = specextract.find_traces(avg_plcam[ix, iy], nfib=38, ini_ys=ylocs)
+    """
+    import peakutils
+
+    image = np.asarray(image)
+    if image.ndim == 2:
+        ny, nx = image.shape
+        if ref_col is None:
+            margin = max(1, nx // 10)
+            col_flux = np.nansum(image, axis=0)
+            col_flux[:margin]  = 0
+            col_flux[-margin:] = 0
+            ref_col = int(np.argmax(col_flux))
+        profile = image[:, ref_col].copy()
+    else:
+        profile = image.copy()
+
+    profile = np.nan_to_num(profile, nan=0.0)
+    profile = np.clip(profile, 0, None)
+
+    found = peakutils.indexes(profile, thres=thres, min_dist=min_dist)
+    if len(found) != nfib:
+        raise ValueError(
+            f"find_peaks: found {len(found)} peaks (expected {nfib}). "
+            f"Adjust thres (currently {thres}) or min_dist ({min_dist})."
+        )
+    return np.sort(found).astype(int)
+
+
+def find_traces(image, nfib, trace_width=4, poly_deg=5, ref_col=None,
+                ini_ys=None, max_jump=2, min_dist=6, plot=False):
+    """
+    Find fiber trace positions across a 2D detector image.
+
+    Starting from initial peak positions at a reference column, this traces
+    each fiber left and right across the detector using subpixel 3-point peak
+    fitting, then fits a polynomial to each raw trace.
+
+    No neon calibration required — any bright dark-subtracted frame works
+    (a lamp flat, or the average science image from the best-populated grid bin).
+
+    Parameters
+    ----------
+    image : ndarray (ny, nx)
+        Reference detector image, dark-subtracted.  The brightest frame or an
+        average of many frames gives the most reliable traces.
+    nfib : int
+        Number of fiber traces to find.
+    trace_width : int
+        Half-width of the cross-dispersion search window when tracking from
+        one column to the next (default 4).
+    poly_deg : int
+        Degree of polynomial fit used to smooth each raw trace (default 5).
+    ref_col : int or None
+        Column index used for initial peak finding.  Defaults to the column
+        with the highest total cross-dispersion flux (edge columns excluded).
+    ini_ys : array-like (nfib,) or None
+        Initial y-pixel guesses for each fiber at ``ref_col``.  When given,
+        automatic peak finding is skipped entirely — useful when you already
+        know roughly where the fibers are (e.g. from a previous run or from
+        ``IRPLred.spec.locate_spectra()``).  The order must match the fiber
+        order you want in the output traces.
+    max_jump : float
+        Maximum allowed pixel jump between adjacent columns before the new
+        peak is rejected and the previous position is kept (default 2).
+    min_dist : int
+        Minimum distance between fiber peaks at the reference column (default 6).
+        Only used when ``ini_ys`` is None.
+    plot : bool
+        If True, overlay the fitted traces on the image.
+
+    Returns
+    -------
+    traces : ndarray (nfib, nx)
+        Y-pixel center of each fiber at every spectral column.
+        Ready to pass to ``make_visplred_box_extractor()``.
+
+    Example
+    -------
+    >>> import PLred.specextract as specextract
+    >>> # use the brightest grid bin as a reference image
+    >>> import h5py, numpy as np
+    >>> with h5py.File('averaged.h5') as f:
+    ...     avg = f['avg_PLcam'][:]
+    ...     nf  = f['metadata/nframes'][:]
+    >>> ix, iy = np.unravel_index(np.argmax(nf), nf.shape)
+    >>> traces = specextract.find_traces(avg[ix, iy], nfib=38, plot=True)
+    >>> extractor = specextract.make_visplred_box_extractor(traces, boxsize=3)
+    """
+    from PLred.visPLred.spec import find_multiple_peaks
+    try:
+        from PLred.imageutils import find_3point_peak
+        _has_3pt = True
+    except ImportError:
+        _has_3pt = False
+
+    ny, nx = image.shape
+
+    # Reference column: brightest column, but avoid the outer 10% of columns
+    # where edge artefacts can produce spurious peaks.
+    if ref_col is None:
+        margin = max(1, nx // 10)
+        col_flux = np.nansum(image, axis=0)
+        col_flux[:margin]  = 0
+        col_flux[-margin:] = 0
+        ref_col = int(np.argmax(col_flux))
+    ref_col = int(np.clip(ref_col, 0, nx - 1))
+
+    # Initial peaks at reference column
+    if ini_ys is not None:
+        ini_ys = np.asarray(ini_ys, dtype=float)
+        if len(ini_ys) != nfib:
+            raise ValueError(
+                f"ini_ys has {len(ini_ys)} entries but nfib={nfib}"
+            )
+    else:
+        profile = image[:, ref_col].copy()
+        profile = np.nan_to_num(profile, nan=0.0)
+        ini_ys = find_multiple_peaks(profile, n_peaks=nfib, min_dist=min_dist).astype(float)
+
+    raw_trace = np.full((nfib, nx), np.nan)
+    raw_trace[:, ref_col] = ini_ys
+
+    def _track_direction(x_range, fib_ini_y):
+        """Track one fiber along x_range, returning per-column y positions."""
+        ypos = np.full(nx, np.nan)
+        yint = int(np.round(fib_ini_y))
+        for x in x_range:
+            y0 = max(0, yint - trace_width)
+            y1 = min(ny, yint + trace_width + 1)
+            crop = image[y0:y1, x]
+            yarr = np.arange(y0, y1)
+            if len(yarr) < 3 or np.nanmax(crop) <= 0:
+                ypos[x] = yint
+                continue
+            try:
+                if _has_3pt:
+                    peak = find_3point_peak(yarr, crop)
+                else:
+                    peak = float(yarr[np.argmax(crop)])
+                if abs(peak - yint) <= max_jump:
+                    ypos[x] = peak
+                    yint = int(np.round(peak))
+                else:
+                    ypos[x] = yint
+            except Exception:
+                ypos[x] = yint
+        return ypos
+
+    for fibind in range(nfib):
+        ini_y = ini_ys[fibind]
+        # trace leftward then rightward from ref_col
+        left  = _track_direction(range(ref_col - 1, -1, -1),    ini_y)
+        right = _track_direction(range(ref_col + 1, nx),         ini_y)
+        for x in range(ref_col - 1, -1, -1):
+            if np.isfinite(left[x]):
+                raw_trace[fibind, x] = left[x]
+        for x in range(ref_col + 1, nx):
+            if np.isfinite(right[x]):
+                raw_trace[fibind, x] = right[x]
+
+    # Polynomial fit to smooth each trace.
+    # Cap degree so we never use more freedom than ~1 knot per 8 columns —
+    # this prevents overfitting on short spectral ranges (e.g. nx=20 → deg 2).
+    effective_deg = min(poly_deg, max(1, nx // 8))
+    x_arr  = np.arange(nx)
+    traces = np.zeros((nfib, nx), dtype=np.float64)
+    for fibind in range(nfib):
+        valid = np.isfinite(raw_trace[fibind])
+        if valid.sum() < effective_deg + 1:
+            traces[fibind] = raw_trace[fibind]  # not enough points; keep raw
+        else:
+            coeffs = np.polyfit(x_arr[valid], raw_trace[fibind, valid], deg=effective_deg)
+            traces[fibind] = np.polyval(coeffs, x_arr)
+
+    if plot:
+        import matplotlib.pyplot as plt
+        vmax = np.nanpercentile(image, 99)
+        plt.figure(figsize=(min(12, nx * 0.05 + 4), 6))
+        plt.imshow(image, aspect='auto', origin='upper', cmap='viridis',
+                   vmin=0, vmax=max(vmax, 1.0))
+        for fibind in range(nfib):
+            plt.plot(x_arr, traces[fibind], lw=0.8, alpha=0.7, linestyle='--', color='white')
+        plt.axvline(ref_col, color='white', lw=0.5, linestyle='--', alpha=0.5)
+        plt.xlabel('x  (spectral)')
+        plt.ylabel('y  (cross-dispersion)')
+        plt.title(f'find_traces: {nfib} fibers  ref_col={ref_col}')
+        plt.tight_layout()
+        plt.show()
+
+    return traces
+
+
+def make_visplred_box_extractor(traces, boxsize=3, dark=None, nonlin_modelfile=None):
+    """
+    Build a trace-following box extractor for visPLred data.
+
+    Wraps ``PLred.visPLred.spec.extract_spec_box``. Unlike
+    ``make_irplred_extractor``, which uses a fixed y-center per fiber, this
+    follows curved fiber traces across the detector — the y-center of each
+    fiber varies with the spectral column x.
+
+    Parameters
+    ----------
+    traces : ndarray (nfib, nx)
+        Y-pixel center of each fiber at each spectral column, already sliced
+        to match the ``nx`` width of the images in the averaged H5.
+        Typically ``SpectrumModel.trace_vals`` (saved as ``trace_vals.npy``)
+        sliced to the spectral range of your ROI:
+        ``traces[:, xmin - XMIN : xmax - XMIN]``
+    boxsize : int
+        Half-width of the extraction box in pixels (default 3).
+    dark : ndarray (ny, nx) or None
+        Dark frame to subtract before extraction. None skips subtraction.
+    nonlin_modelfile : str or None
+        Path to nonlinearity-correction FITS from
+        ``visPLred/tutorials/pre1_nonlinearity_correction.ipynb``.
+        None skips nonlinearity correction.
+
+    Returns
+    -------
+    callable  f(image: ndarray[ny, nx]) -> ndarray[nfib, nwav]
+
+    Notes
+    -----
+    ``traces`` must have the same ``nx`` as the images it will be applied to.
+    If the averaged H5 was built from a cropped detector region ``[xmin, xmax)``,
+    slice the full-detector traces accordingly before passing them here.
+
+    Example
+    -------
+    >>> import numpy as np
+    >>> import PLred.specextract as specextract
+    >>> # trace_vals shape: (nfib, XMAX-XMIN) from SpectrumModel.trace_spectra()
+    >>> trace_vals = np.load('model/trace_vals.npy')
+    >>> XMIN = 200
+    >>> xmin, xmax = 600, 900          # spectral ROI used in ingest_to_h5
+    >>> traces_roi = trace_vals[:, xmin - XMIN : xmax - XMIN]
+    >>> extractor = specextract.make_visplred_box_extractor(traces_roi, boxsize=3)
+    >>> specextract.extract_to_coupling_map('averaged.h5', extractor, 'coupling_map.fits')
+    """
+    from PLred.visPLred.spec import extract_spec_box
+    _traces = np.asarray(traces, dtype=np.float64)
+
+    def _extract(image):
+        im = image - dark if dark is not None else image
+        if nonlin_modelfile is not None:
+            from PLred.visPLred.preprocess import correct_nonlinearity_map
+            im, _ = correct_nonlinearity_map(im, nonlin_modelfile)
+        return extract_spec_box(_traces, im, boxsize=boxsize).astype(np.float32)
+
+    return _extract
+
+
 # ------------------------------------------------------------------
 # Internal helpers
 # ------------------------------------------------------------------
