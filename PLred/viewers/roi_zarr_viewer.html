@@ -775,6 +775,16 @@ function normPath(p) {
   return p.replace(/^\/+/, '').replace(/\/+/g, '/');
 }
 
+function pathCandidates(path) {
+  const p = normPath(path);
+  const out = [p];
+  const slash = p.indexOf('/');
+  if (slash >= 0 && slash + 1 < p.length) {
+    out.push(p.slice(slash + 1));
+  }
+  return [...new Set(out.filter(Boolean))];
+}
+
 function bytesToJson(bytes) {
   const txt = new TextDecoder().decode(bytes);
   return JSON.parse(txt);
@@ -786,8 +796,11 @@ class UrlSource {
   }
 
   async getBytes(path) {
-    const raw = await fetchBytes(`${this.baseUrl}/${normPath(path)}`);
-    return raw;
+    for (const candidate of pathCandidates(path)) {
+      const raw = await fetchBytes(`${this.baseUrl}/${candidate}`);
+      if (raw) return raw;
+    }
+    return null;
   }
 
   async getJson(path) {
@@ -847,10 +860,14 @@ class ZipSource {
   }
 
   async getBytes(path) {
-    const key = this.resolve(path);
-    const file = this.entries.get(key);
-    if (!file) return null;
-    return new Uint8Array(await file.async('uint8array'));
+    for (const candidate of pathCandidates(path)) {
+      const key = this.resolve(candidate);
+      const file = this.entries.get(key);
+      if (file) {
+        return new Uint8Array(await file.async('uint8array'));
+      }
+    }
+    return null;
   }
 
   async getJson(path) {
