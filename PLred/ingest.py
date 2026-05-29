@@ -214,31 +214,52 @@ def ingest_to_h5(
         'compression_opts':    compression_opts,
     }
 
+    # Relative times (seconds from t0, starting at 0 for the user)
+    t_start_rel = 0.0
+    t_end_rel   = t_end - t0      # duration in seconds
+    timestamps_rel = timestamps - t0
+
     print("Writing giant H5: %s" % outpath)
     with h5py.File(outpath, 'w') as h5f:
-        # Root-level flags for fast programmatic access (no JSON parsing needed)
+        # ------------------------------------------------------------------
+        # Root attrs — everything a user needs without opening sub-groups
+        # ------------------------------------------------------------------
         h5f.attrs['n_frames']              = N
         h5f.attrs['psfcam_is_fast']        = psfcam_is_fast
         h5f.attrs['plcam_type']            = plcam_type
-        h5f.attrs['plcam_dark_subtracted'] = dark_subtracted   # KEY FLAG
+        h5f.attrs['plcam_dark_subtracted'] = dark_subtracted
         h5f.attrs['ingest_time']           = ingest_time
+        h5f.attrs['t_start']               = t_start_rel   # 0.0 by definition
+        h5f.attrs['t_end']                 = t_end_rel     # seconds from first frame
+        h5f.attrs['duration_s']            = t_end_rel
+        h5f.attrs['t0_unix']               = t0            # absolute reference
+        if plcam_roi:
+            h5f.attrs['plcam_roi']         = list(plcam_roi)   # visible in dict(f.attrs)
 
+        # ------------------------------------------------------------------
         # metadata group
+        # ------------------------------------------------------------------
         meta_grp = h5f.create_group('metadata')
-        meta_grp.create_dataset('timestamps', data=timestamps - t0, dtype='float64')
-        meta_grp.create_dataset('t0',         data=t0,              dtype='float64')
+        meta_grp.create_dataset('timestamps', data=timestamps_rel, dtype='float64')
+        meta_grp.create_dataset('t0',         data=t0,             dtype='float64')
         meta_grp.create_dataset('config',     data=json.dumps(config_dict))
-        # String array of PLcam FITS files — easier to read than parsing JSON
+        # String array of PLcam FITS files — readable without parsing JSON
         meta_grp.create_dataset(
             'plcam_fits_files',
             data=np.array(plcam_fits_files, dtype=h5py.special_dtype(vlen=str)),
         )
-        meta_grp.attrs['n_frames']      = N
-        meta_grp.attrs['t0']            = t0
-        meta_grp.attrs['t_end']         = t_end
-        meta_grp.attrs['duration_s']    = t_end - t0
+        # Convenience attrs on metadata group — mirrors root for quick access
+        meta_grp.attrs['n_frames']    = N
+        meta_grp.attrs['t0_unix']     = t0
+        meta_grp.attrs['t_start']     = t_start_rel
+        meta_grp.attrs['t_end']       = t_end_rel
+        meta_grp.attrs['duration_s']  = t_end_rel
+        if plcam_roi:
+            meta_grp.attrs['plcam_roi'] = list(plcam_roi)
 
+        # ------------------------------------------------------------------
         # psfcam group
+        # ------------------------------------------------------------------
         psf_grp = h5f.create_group('psfcam')
         psf_grp.create_dataset('frames',
                                data=psfcam_frames,
@@ -255,7 +276,9 @@ def ingest_to_h5(
                                               float(np.nanmax(centroids[:, 1]))]
         psf_grp.attrs['peak_range']       = [float(peaks.min()), float(peaks.max())]
 
-        # plcam group — flags co-located with data for self-contained reading
+        # ------------------------------------------------------------------
+        # plcam group
+        # ------------------------------------------------------------------
         pl_grp = h5f.create_group('plcam')
         pl_grp.attrs['dark_subtracted'] = dark_subtracted
         pl_grp.attrs['dark_source']     = dark_source
@@ -264,6 +287,8 @@ def ingest_to_h5(
             pl_grp.attrs['dark_median'] = dark_median
             pl_grp.attrs['dark_std']    = dark_std
             pl_grp.attrs['dark_shape']  = dark_shape
+        if plcam_roi:
+            pl_grp.attrs['roi']         = list(plcam_roi)   # kept for back-compat
 
         if plcam_type == 'spectra':
             pl_grp.create_dataset('spectra',
@@ -273,8 +298,6 @@ def ingest_to_h5(
                                   compression=compression,
                                   compression_opts=compression_opts)
         else:
-            # chunk=(1, ny, nx): each frame is its own chunk — no
-            # read-modify-write overhead from neighbouring frames.
             frames_ds = pl_grp.create_dataset(
                 'frames',
                 shape=(N, ny, nx),
@@ -283,8 +306,6 @@ def ingest_to_h5(
                 compression=compression,
                 compression_opts=compression_opts,
             )
-            if plcam_roi:
-                pl_grp.attrs['roi'] = list(plcam_roi)
 
     # ------------------------------------------------------------------
     # 6. Fill PLcam frames (file by file to keep RAM constant)
