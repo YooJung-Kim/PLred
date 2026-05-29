@@ -973,10 +973,12 @@ class SpectrumModel:
                 # np.save('iter%d_ycorr.npy' % i, ycoor_correction_map)
 
 
-        fig, axs = plt.subplots(ncols=n_iter, figsize=(n_iter * 5, 5))
+        fig, axs = plt.subplots(ncols=n_iter, figsize=(n_iter * 5, 5), squeeze=False)
+        axs = axs[0]   # shape (1, n_iter) → (n_iter,)
         for i in range(n_iter):
             axs[i].imshow((imvec - recons[i]).reshape((-1, xmax-xmin)), origin='lower')
             axs[i].set_title('iter %d residual' % i)
+        plt.tight_layout()
         plt.show()
 
         return all_As, all_ycoor_correction_maps, recons, imvec.reshape((-1, (xmax-xmin)))
