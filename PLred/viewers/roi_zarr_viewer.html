@@ -7,27 +7,30 @@
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Plus+Jakarta+Sans:wght@400;500;700&display=swap');
 :root {
-  --bg: #f7f3ea;
-  --panel: #fffdf8;
-  --ink: #1f1f1d;
-  --muted: #6f6a62;
-  --line: #d8cfbf;
-  --accent: #0f766e;
-  --accent-2: #9a3412;
-  --ok: #0f766e;
-  --warn: #b45309;
+  --bg: #f4f7fb;
+  --panel: #ffffff;
+  --ink: #102033;
+  --muted: #5b6b7f;
+  --line: #d7e0ea;
+  --accent: #2563eb;
+  --accent-2: #0f766e;
+  --ok: #059669;
+  --warn: #d97706;
 }
 * { box-sizing: border-box; }
 body {
   margin: 0;
-  background: radial-gradient(1200px 700px at 80% -20%, #f3e8d8 0%, var(--bg) 60%);
+  background:
+    radial-gradient(1200px 700px at 10% -20%, #dbeafe 0%, transparent 48%),
+    radial-gradient(900px 500px at 90% 0%, #ccfbf1 0%, transparent 42%),
+    linear-gradient(180deg, #f8fbff 0%, var(--bg) 100%);
   color: var(--ink);
   font-family: 'Plus Jakarta Sans', sans-serif;
 }
 header {
   padding: 14px 20px;
   border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--panel) 92%, white);
+  background: color-mix(in srgb, var(--panel) 90%, #eef4fb);
   display: flex;
   align-items: center;
   gap: 12px;
@@ -80,14 +83,14 @@ button:disabled {
   width: min(32vw, 360px);
   height: 6px;
   border-radius: 999px;
-  background: #e8e0d2;
+  background: #e4edf6;
   overflow: hidden;
   display: none;
 }
 #load-progress-bar {
   width: 0%;
   height: 100%;
-  background: linear-gradient(90deg, var(--accent), #2dd4bf);
+  background: linear-gradient(90deg, #1d4ed8, #06b6d4, #10b981);
   transition: width 120ms linear;
 }
 main {
@@ -218,6 +221,43 @@ aside {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 14px;
+}
+.frames-per-bin-wrap {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+}
+.frames-per-bin-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.frames-per-bin-main canvas {
+  width: 100%;
+  max-width: 300px;
+  margin: 0 auto;
+}
+.frames-per-bin-legend {
+  width: 64px;
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+.frames-per-bin-colorbar {
+  width: 22px;
+  height: 100%;
+  min-height: 260px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+}
+.frames-per-bin-labels {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 2px 0;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
 }
 .card {
   border: 1px solid var(--line);
@@ -358,7 +398,18 @@ canvas {
       <div class="panel-grid">
         <div class="card">
           <h4>Frames Per Bin</h4>
-          <canvas id="nframes-canvas" width="512" height="512"></canvas>
+          <div class="frames-per-bin-wrap">
+            <div class="frames-per-bin-main">
+              <canvas id="nframes-canvas" width="360" height="360"></canvas>
+            </div>
+            <div class="frames-per-bin-legend">
+              <canvas id="nframes-colorbar" class="frames-per-bin-colorbar" width="22" height="260"></canvas>
+              <div class="frames-per-bin-labels">
+                <span id="nframes-max-label">max</span>
+                <span id="nframes-min-label">0</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
       <div style="height:12px;"></div>
@@ -376,10 +427,10 @@ canvas {
       <div class="panel-grid">
         <div class="card">
           <h4>PSF Frame</h4>
-          <canvas id="psf-canvas" width="480" height="480"></canvas>
+          <canvas id="psf-canvas" width="720" height="720"></canvas>
         </div>
         <div class="card">
-          <h4>PL ROI Frame (best effort)</h4>
+          <h4>PL ROI Frame</h4>
           <div class="row" style="margin-bottom:8px;">
             <label style="min-width:120px;">ROI Zoom</label>
             <input id="roi-zoom" type="range" min="1" max="12" step="1" value="4">
@@ -544,7 +595,7 @@ function initTimeSlider(minSec, maxSec) {
 function setCanvasDisplaySize(canvas, w, h, maxW, maxH) {
   const sx = maxW / Math.max(1, w);
   const sy = maxH / Math.max(1, h);
-  const s = Math.min(sx, sy, 1);
+  const s = Math.min(sx, sy);
   canvas.style.width = `${Math.max(1, Math.floor(w * s))}px`;
   canvas.style.height = `${Math.max(1, Math.floor(h * s))}px`;
 }
@@ -600,6 +651,33 @@ function decodeTyped(bytes, dtype, count) {
     else out[i] = view.getInt32(off, little);
   }
   return out;
+}
+
+function turboColor(t) {
+  const x = clamp(t, 0, 1);
+  const r = 34.61 + x * (1172.33 + x * (-10793.56 + x * (33300.12 + x * (-38394.49 + x * 14825.05))));
+  const g = 23.31 + x * (557.33 + x * (1225.33 + x * (-3574.96 + x * (1073.77 + x * 707.56))));
+  const b = 27.2 + x * (3211.1 + x * (-15327.97 + x * (27814.0 + x * (-22569.18 + x * 6838.66))));
+  return [clamp(Math.round(r), 0, 255), clamp(Math.round(g), 0, 255), clamp(Math.round(b), 0, 255)];
+}
+
+function drawTurboColorbar(canvas) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width;
+  const h = canvas.height;
+  const img = ctx.createImageData(w, h);
+  for (let y = 0; y < h; y++) {
+    const t = 1 - (y / Math.max(1, h - 1));
+    const [r, g, b] = turboColor(t);
+    for (let x = 0; x < w; x++) {
+      const idx = (y * w + x) * 4;
+      img.data[idx + 0] = r;
+      img.data[idx + 1] = g;
+      img.data[idx + 2] = b;
+      img.data[idx + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
 }
 
 async function fetchBytes(url) {
@@ -793,12 +871,27 @@ function bytesToJson(bytes) {
 class UrlSource {
   constructor(baseUrl) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
+    try {
+      const parsed = new URL(this.baseUrl, window.location.href);
+      this.baseVariants = [parsed.toString().replace(/\/$/, '')];
+      const parts = parsed.pathname.split('/').filter(Boolean);
+      for (let drop = 1; drop <= 2 && parts.length > drop; drop++) {
+        const variant = new URL(parsed.toString());
+        variant.pathname = `/${parts.slice(0, parts.length - drop).join('/')}`;
+        this.baseVariants.push(variant.toString().replace(/\/$/, ''));
+      }
+      this.baseVariants = [...new Set(this.baseVariants)];
+    } catch (_err) {
+      this.baseVariants = [this.baseUrl];
+    }
   }
 
   async getBytes(path) {
     for (const candidate of pathCandidates(path)) {
-      const raw = await fetchBytes(`${this.baseUrl}/${candidate}`);
-      if (raw) return raw;
+      for (const base of this.baseVariants) {
+        const raw = await fetchBytes(`${base}/${candidate}`);
+        if (raw) return raw;
+      }
     }
     return null;
   }
@@ -814,6 +907,16 @@ class ZipSource {
   constructor(entries, rootPrefix) {
     this.entries = entries;
     this.rootPrefix = rootPrefix;
+    this.suffixIndex = new Map();
+    for (const key of entries.keys()) {
+      const parts = key.split('/');
+      for (let i = 0; i < parts.length; i++) {
+        const suffix = parts.slice(i).join('/');
+        if (!this.suffixIndex.has(suffix)) {
+          this.suffixIndex.set(suffix, key);
+        }
+      }
+    }
   }
 
   static async fromZipData(zipData) {
@@ -865,6 +968,13 @@ class ZipSource {
       const file = this.entries.get(key);
       if (file) {
         return new Uint8Array(await file.async('uint8array'));
+      }
+      const suffixKey = this.suffixIndex.get(candidate);
+      if (suffixKey) {
+        const suffixFile = this.entries.get(suffixKey);
+        if (suffixFile) {
+          return new Uint8Array(await suffixFile.async('uint8array'));
+        }
       }
     }
     return null;
@@ -1075,9 +1185,7 @@ function drawHeat(canvas, data, w, h) {
   for (let i = 0; i < data.length; i++) {
     const v = data[i];
     const t = Number.isFinite(v) ? clamp((v - vmin) / (vmax - vmin + 1e-30), 0, 1) : 0;
-    const r = Math.floor(255 * t);
-    const g = Math.floor(255 * (1 - Math.abs(t - 0.5) * 2));
-    const b = Math.floor(255 * (1 - t));
+    const [r, g, b] = turboColor(t);
     img.data[i * 4 + 0] = r;
     img.data[i * 4 + 1] = g;
     img.data[i * 4 + 2] = b;
@@ -1094,7 +1202,13 @@ async function computeMaps() {
   const grid = buildGrid(mask);
   gridState = { mask, ...grid };
 
-  drawHeat(document.getElementById('nframes-canvas'), grid.nframes, grid.mapN, grid.mapN);
+  const nframesCanvas = document.getElementById('nframes-canvas');
+  drawHeat(nframesCanvas, grid.nframes, grid.mapN, grid.mapN);
+  setCanvasDisplaySize(nframesCanvas, grid.mapN, grid.mapN, 300, 300);
+  const colorbarCanvas = document.getElementById('nframes-colorbar');
+  drawTurboColorbar(colorbarCanvas);
+  document.getElementById('nframes-max-label').textContent = String(Math.max(...grid.nframes));
+  document.getElementById('nframes-min-label').textContent = '0';
 
   const mapsEl = document.getElementById('maps');
   mapsEl.innerHTML = '';
@@ -1160,8 +1274,12 @@ async function loadFrameTab() {
     label.textContent = String(k);
 
     const psf = await arrays.psf.readPsfFrame(k);
-    drawHeat(document.getElementById('psf-canvas'), psf.data, psf.w, psf.h);
-    setCanvasDisplaySize(document.getElementById('psf-canvas'), psf.w, psf.h, 640, 520);
+    const psfCanvas = document.getElementById('psf-canvas');
+    const psfCard = psfCanvas.closest('.card');
+    const psfMaxW = Math.max(240, (psfCard ? psfCard.clientWidth : window.innerWidth) - 24);
+    const psfMaxH = Math.max(240, Math.floor(window.innerHeight * 0.55));
+    drawHeat(psfCanvas, psf.data, psf.w, psf.h);
+    setCanvasDisplaySize(psfCanvas, psf.w, psf.h, psfMaxW, psfMaxH);
 
     const roiMsg = document.getElementById('roi-msg');
     const roiCanvas = document.getElementById('roi-canvas');
