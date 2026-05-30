@@ -39,7 +39,10 @@ def main():
         filename = cfg.get('Output', {}).get('filename', 'fastcam').strip() or 'fastcam'
         fastcam_h5 = os.path.join(outname, filename + '.h5')
 
-    save_diagnostic(plot_step1(fastcam_h5), get_plots_dir(args.config), '1_sort.png')
+    from PLred.scripts._diagnostics import plot_pre_ingest_check
+    plots_dir = get_plots_dir(args.config)
+    save_diagnostic(plot_step1(fastcam_h5), plots_dir, '1_sort.png')
+    save_diagnostic(plot_pre_ingest_check(args.config), plots_dir, '1_first_frame.png')
 
 
 if __name__ == '__main__':

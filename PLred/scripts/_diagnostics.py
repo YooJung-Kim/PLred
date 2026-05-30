@@ -106,35 +106,133 @@ def plot_step1(fastcam_h5):
 
 
 # ---------------------------------------------------------------------------
-# First-frame check  (called after ingest)
+# First-frame check  (called right after sort, before ingest)
 # ---------------------------------------------------------------------------
 
-def plot_first_frame_check(alldata_h5, pix2mas=None):
+def plot_pre_ingest_check(configname):
     """
-    Two-panel diagnostic for the very first frame after ingest.
+    Two-panel first-frame diagnostic produced immediately after sort.
 
-    Left  — PSF frame (dark-subtracted, cropped from sort step).
-            vmin=0, colorbar, PSF peak marked with a red cross, pixel scale bar.
-    Right — PL ROI frame (dark-subtracted in ingest).
-            vmin=0, colorbar.
+    Left  — PSF frame [0] from fastcam.h5 (dark-subtracted and cropped in sort).
+             vmin=0, colorbar, PSF peak cross, pixel/mas scale bar.
+    Right — PL frame [0] from first raw slowcam FITS file, dark-subtracted and
+             ROI-cropped inline just for display.  vmin=0, colorbar.
 
-    vmin=0 on both panels lets you verify dark subtraction visually:
-    background should sit near zero if a dark was applied.
+    vmin=0 on both panels lets you check dark subtraction before committing to
+    the full ingest run.
+
+    Supports new config format ([Observation]/[Fastcam]/[Slowcam]/[ROI]/[Outputs])
+    and the unified format ([Sort]/[Ingest]/[Cameras]).
     """
-    import h5py
+    import h5py, json
+    from astropy.io import fits as pyfits
+    from configobj import ConfigObj
 
-    with h5py.File(alldata_h5, 'r') as f:
-        psf_frame  = f['psfcam/frames'][0].astype('float32')
-        pl_frame   = f['plcam/frames'][0].astype('float32')
-        plcam_roi  = list(f.attrs.get('plcam_roi', []))
-        pl_dark    = bool(f['plcam'].attrs.get('dark_subtracted', False))
+    cfg = ConfigObj(configname)
+
+    # ── Parse config ─────────────────────────────────────────────────────────
+    if 'Observation' in cfg and cfg.get('Fastcam', {}).get('data_dir', '').strip():
+        obs_sec     = cfg.get('Observation', {})
+        fc_sec      = cfg.get('Fastcam', {})
+        sc_sec      = cfg.get('Slowcam', {})
+        roi_sec     = cfg.get('ROI', {})
+        outputs_sec = cfg.get('Outputs', {})
+
+        step1_h5       = outputs_sec.get('timestamp_match_output', 'fastcam.h5').strip()
+        fastcam_type   = fc_sec.get('type', 'PSF').strip().upper()
+        psfcam_is_fast = (fastcam_type == 'PSF')
+        sc_data_dir    = sc_sec.get('data_dir', '').strip()
+        sc_dark_path   = sc_sec.get('dark', '').strip()
+        roi_str        = roi_sec.get('PLcam_ROI', '').strip().strip('"').strip("'")
+        plcam_roi      = tuple(int(x) for x in roi_str.split(',')) if roi_str else None
+        start_time     = obs_sec.get('start_time', '00:00:00').strip()
+        end_time       = obs_sec.get('end_time',   '23:59:59').strip()
+        try:
+            pix2mas = float(cfg.get('Average', {}).get('pix2mas', 0) or 0) or None
+        except Exception:
+            pix2mas = None
+
+    else:
+        sort_sec  = cfg.get('Sort', {})
+        ingest    = cfg.get('Ingest', {})
+        cameras   = cfg.get('Cameras', {})
+
+        sort_output = sort_sec.get('output', '').strip()
+        if sort_output:
+            step1_h5 = sort_output
+        else:
+            outname  = cfg.get('Output', {}).get('outname', '.').strip() or '.'
+            filename = cfg.get('Output', {}).get('filename', 'fastcam').strip() or 'fastcam'
+            step1_h5 = os.path.join(outname, filename + '.h5')
+
+        fastcam_role   = cameras.get('fastcam_role', 'PSF').strip().upper()
+        psfcam_is_fast = (fastcam_role == 'PSF')
+
+        if psfcam_is_fast:
+            sc_data_dir  = ingest.get('plcam_data_dir', '').strip()
+            sc_dark_path = ingest.get('plcam_dark', '').strip()
+        else:
+            sc_data_dir  = (ingest.get('slowcam_data_dir', '').strip()
+                            or ingest.get('plcam_data_dir', '').strip())
+            sc_dark_path = ingest.get('psfcam_dark', '').strip()
+
+        roi_str   = ingest.get('plcam_roi', '').strip()
+        plcam_roi = tuple(int(x) for x in roi_str.split(',')) if roi_str else None
+        start_time = sort_sec.get('fastcam_start_time', '00:00:00').strip() or '00:00:00'
+        end_time   = sort_sec.get('fastcam_end_time',   '23:59:59').strip() or '23:59:59'
+        try:
+            pix2mas = float(cfg.get('Average', {}).get('pix2mas', 0) or 0) or None
+        except Exception:
+            pix2mas = None
+
+    # ── Load PSF frame from fastcam.h5 ───────────────────────────────────────
+    with h5py.File(step1_h5, 'r') as fh:
+        fast_frame = fh['frames'][0].astype('float32')
+
+    # ── Load first raw slowcam frame, apply dark + ROI ───────────────────────
+    slow_frame = None
+    if sc_data_dir:
+        try:
+            from PLred._sort_base import find_data_between
+            fits_files = find_data_between(sc_data_dir, start_time, end_time, footer='.fits')
+            if fits_files:
+                raw = pyfits.getdata(fits_files[0]).astype('float32')
+                frm = raw[0] if raw.ndim == 3 else raw
+                if sc_dark_path:
+                    dk = pyfits.getdata(sc_dark_path).astype('float32')
+                    if dk.ndim == 3:
+                        dk = dk.mean(axis=0)
+                    frm = frm - dk
+                if plcam_roi is not None:
+                    y0, y1, x0, x1 = plcam_roi
+                    slow_frame = frm[y0:y1, x0:x1]
+                else:
+                    slow_frame = frm
+        except Exception as e:
+            print(f'Warning: could not load slowcam frame for diagnostic: {e}')
+
+    # When PLcam is the fastcam, swap roles so PSF always goes left
+    if not psfcam_is_fast:
+        psf_frame = slow_frame
+        pl_frame  = fast_frame
+        pl_dark_note  = 'dark sub in sort'
+        psf_dark_note = 'dark sub inline'
+    else:
+        psf_frame = fast_frame
+        pl_frame  = slow_frame
+        pl_dark_note  = 'dark sub inline'
+        psf_dark_note = 'dark sub in sort'
+
+    if psf_frame is None:
+        psf_frame = np.zeros((40, 40), dtype='float32')
 
     peak_yx = np.unravel_index(int(np.argmax(psf_frame)), psf_frame.shape)
 
+    # ── Build figure ─────────────────────────────────────────────────────────
     fig = _figure(figsize=(11, 4))
     gs  = fig.add_gridspec(1, 2, wspace=0.42)
 
-    # ── Left: PSF frame ──────────────────────────────────────────────────────
+    # Left: PSF frame
     ax0  = fig.add_subplot(gs[0, 0])
     vmax = float(np.nanpercentile(psf_frame, 99.5))
     im0  = ax0.imshow(psf_frame, origin='upper', cmap='inferno',
@@ -143,33 +241,35 @@ def plot_first_frame_check(alldata_h5, pix2mas=None):
     ax0.plot(peak_yx[1], peak_yx[0], 'r+', ms=14, mew=2,
              label=f'peak ({peak_yx[1]},{peak_yx[0]})')
     ax0.legend(fontsize=7, loc='upper right')
-    ax0.set_title('PSF frame 0  (dark sub in sort)', fontsize=9)
+    ax0.set_title(f'PSF frame 0  ({psf_dark_note})', fontsize=9)
     ax0.set_xlabel('x (px)'); ax0.set_ylabel('y (px)')
 
-    # Pixel / mas scale bar in bottom-left corner
     h_psf, w_psf = psf_frame.shape
     bar_px = max(1, w_psf // 4)
     bx0    = w_psf * 0.06
     by     = h_psf * 0.90
     ax0.plot([bx0, bx0 + bar_px], [by, by], 'w-', lw=2.5, solid_capstyle='butt')
-    if pix2mas is not None and pix2mas > 0:
-        lbl = f'{bar_px * pix2mas:.0f} mas'
-    else:
-        lbl = f'{bar_px} px'
+    lbl = f'{bar_px * pix2mas:.0f} mas' if (pix2mas is not None and pix2mas > 0) else f'{bar_px} px'
     ax0.text(bx0 + bar_px / 2, by - h_psf * 0.04, lbl,
              color='white', fontsize=7, ha='center', va='bottom')
 
-    # ── Right: PL ROI frame ──────────────────────────────────────────────────
-    ax1  = fig.add_subplot(gs[0, 1])
-    vmax1 = float(np.nanpercentile(pl_frame, 99.5))
-    im1   = ax1.imshow(pl_frame, origin='upper', cmap='inferno',
-                       vmin=0, vmax=max(vmax1, 1e-3), aspect='auto')
-    fig.colorbar(im1, ax=ax1, label='Counts', fraction=0.046, pad=0.04)
-    roi_str = f'ROI {plcam_roi}' if plcam_roi else 'full frame'
-    ax1.set_title(f'PL frame 0  ({roi_str})  dark-sub={pl_dark}', fontsize=9)
+    # Right: PL ROI frame
+    ax1 = fig.add_subplot(gs[0, 1])
+    if pl_frame is not None:
+        vmax1 = float(np.nanpercentile(pl_frame, 99.5))
+        im1   = ax1.imshow(pl_frame, origin='upper', cmap='inferno',
+                           vmin=0, vmax=max(vmax1, 1e-3), aspect='auto')
+        fig.colorbar(im1, ax=ax1, label='Counts', fraction=0.046, pad=0.04)
+        roi_tag = f'ROI {list(plcam_roi)}' if plcam_roi else 'full frame'
+        ax1.set_title(f'PL frame 0  ({roi_tag})\n{pl_dark_note}', fontsize=9)
+    else:
+        ax1.text(0.5, 0.5, 'PL data unavailable\n(check slowcam data_dir)',
+                 ha='center', va='center', transform=ax1.transAxes, fontsize=9,
+                 color='gray')
+        ax1.set_title('PL frame 0', fontsize=9)
     ax1.set_xlabel('x (px, local ROI)'); ax1.set_ylabel('y (px)')
 
-    fig.suptitle(f'First-frame check — {os.path.basename(alldata_h5)}', y=1.02)
+    fig.suptitle(f'Pre-ingest first-frame check — {os.path.basename(step1_h5)}', y=1.02)
     return fig
 
 

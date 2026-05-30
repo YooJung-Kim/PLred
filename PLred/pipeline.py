@@ -58,26 +58,33 @@ def _step1(configname):
     print("\n=== Step 1: Timestamp matching (plred-sort) ===")
     from PLred.sort import script_match_timestamps
     from configobj import ConfigObj
-    from PLred.scripts._diagnostics import plot_step1, save_diagnostic, get_plots_dir
+    from PLred.scripts._diagnostics import (
+        plot_step1, plot_pre_ingest_check, save_diagnostic, get_plots_dir,
+    )
 
     script_match_timestamps(configname)
 
     cfg      = ConfigObj(configname)
-    outname  = cfg.get('Output', {}).get('outname', '.').strip() or '.'
-    filename = cfg.get('Output', {}).get('filename', 'fastcam').strip() or 'fastcam'
-    save_diagnostic(
-        plot_step1(os.path.join(outname, filename + '.h5')),
-        get_plots_dir(configname), '1_sort.png',
+    outputs  = cfg.get('Outputs', {})
+    sort_sec = cfg.get('Sort', {})
+    fastcam_h5 = (
+        outputs.get('timestamp_match_output', '').strip()
+        or sort_sec.get('output', '').strip()
+        or os.path.join(
+            cfg.get('Output', {}).get('outname', '.').strip() or '.',
+            (cfg.get('Output', {}).get('filename', 'fastcam').strip() or 'fastcam') + '.h5',
+        )
     )
+    plots_dir = get_plots_dir(configname)
+    save_diagnostic(plot_step1(fastcam_h5), plots_dir, '1_sort.png')
+    save_diagnostic(plot_pre_ingest_check(configname), plots_dir, '1_first_frame.png')
 
 
 def _step2(configname):
     print("\n=== Step 2: Build giant H5 (plred-ingest) ===")
     from PLred.ingest import ingest_from_config_unified
     from configobj import ConfigObj
-    from PLred.scripts._diagnostics import (
-        plot_step2, plot_first_frame_check, save_diagnostic, get_plots_dir,
-    )
+    from PLred.scripts._diagnostics import plot_step2, save_diagnostic, get_plots_dir
 
     ingest_from_config_unified(configname)
 
@@ -88,17 +95,7 @@ def _step2(configname):
         or cfg.get('Ingest', {}).get('output', 'alldata.h5').strip()
         or 'alldata.h5'
     )
-    plots_dir  = get_plots_dir(configname)
-    save_diagnostic(plot_step2(alldata_h5), plots_dir, '2_ingest.png')
-
-    try:
-        pix2mas = float(cfg.get('Average', {}).get('pix2mas', 0) or 0) or None
-    except Exception:
-        pix2mas = None
-    save_diagnostic(
-        plot_first_frame_check(alldata_h5, pix2mas=pix2mas),
-        plots_dir, '2_first_frame.png',
-    )
+    save_diagnostic(plot_step2(alldata_h5), get_plots_dir(configname), '2_ingest.png')
 
 
 def _step3(configname, pause=True):
