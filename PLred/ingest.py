@@ -218,7 +218,9 @@ def ingest_to_h5(
     # else: dark_subtracted and dark_source already set above for psfcam_is_fast=False
 
     # Dark statistics (useful for quality checks downstream)
-    if dark_subtracted:
+    # In the psfcam_is_fast=False path, PLcam dark was already applied in step 1,
+    # so dark_frame may still be None even though dark_subtracted=True.
+    if dark_subtracted and dark_frame is not None:
         dark_mean   = float(np.mean(dark_frame))
         dark_median = float(np.median(dark_frame))
         dark_std    = float(np.std(dark_frame))
