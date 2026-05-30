@@ -1884,6 +1884,8 @@ def extract_from_config(configname):
     wavsol_file = (se.get('wavsol_file', '') or
                    cfg.get('WaveSol', {}).get('wavsol_file', '')).strip() or None
 
+    truncate = int(se.get('truncate', 0) or 0)
+
     if ext_type == 'simple_box':
         trace_file = se.get('trace_file', '').strip()
         if not trace_file:
@@ -1922,5 +1924,13 @@ def extract_from_config(configname):
     else:
         raise ValueError("Unknown extractor type: %r.  "
                          "Choose simple_box, trace_box, simple_optimal, or FIRSTPL." % ext_type)
+
+    if truncate > 0:
+        _inner = extractor
+        def _truncated(image):
+            spec = _inner(image)
+            return spec[:, truncate : spec.shape[1] - truncate]
+        extractor = _attach_info(_truncated, {**_inner._info, 'truncate': truncate})
+        print(f"Truncating {truncate} edge channels from each end of extracted spectra.")
 
     return extract_to_coupling_map(input_h5, extractor, output)
