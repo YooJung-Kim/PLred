@@ -28,17 +28,14 @@ def main():
     print("    plred-average obs.ini")
 
     # ── Diagnostic plot ───────────────────────────────────────────────────────
-    try:
-        from configobj import ConfigObj
-        cfg = ConfigObj(args.config)
-        alldata_h5 = cfg.get('Ingest', {}).get('output', 'alldata.h5').strip() or 'alldata.h5'
-        outdir = os.path.dirname(os.path.abspath(alldata_h5))
+    from configobj import ConfigObj
+    from PLred.scripts._diagnostics import plot_step3, save_diagnostic
 
-        from PLred.scripts._diagnostics import plot_step3, save_diagnostic
-        fig = plot_step3(alldata_h5)
-        save_diagnostic(fig, outdir, '3_roi.png')
-    except Exception as e:
-        print(f'Warning: could not save step 3 diagnostic: {e}')
+    cfg        = ConfigObj(args.config)
+    alldata_h5 = cfg.get('Ingest', {}).get('output', 'alldata.h5').strip() or 'alldata.h5'
+    outdir     = os.path.dirname(os.path.abspath(alldata_h5))
+
+    save_diagnostic(plot_step3(alldata_h5), outdir, '3_roi.png')
 
 
 if __name__ == '__main__':

@@ -22,17 +22,14 @@ def main():
     average_to_h5_from_config(args.config)
 
     # ── Diagnostic plot ───────────────────────────────────────────────────────
-    try:
-        from configobj import ConfigObj
-        cfg = ConfigObj(args.config)
-        map_h5 = cfg.get('Average', {}).get('output', 'map.h5').strip() or 'map.h5'
-        outdir = os.path.dirname(os.path.abspath(map_h5))
+    from configobj import ConfigObj
+    from PLred.scripts._diagnostics import plot_step4, save_diagnostic
 
-        from PLred.scripts._diagnostics import plot_step4, save_diagnostic
-        fig = plot_step4(map_h5)
-        save_diagnostic(fig, outdir, '4_average.png')
-    except Exception as e:
-        print(f'Warning: could not save step 4 diagnostic: {e}')
+    cfg    = ConfigObj(args.config)
+    map_h5 = cfg.get('Average', {}).get('output', 'map.h5').strip() or 'map.h5'
+    outdir = os.path.dirname(os.path.abspath(map_h5))
+
+    save_diagnostic(plot_step4(map_h5), outdir, '4_average.png')
 
 
 if __name__ == '__main__':

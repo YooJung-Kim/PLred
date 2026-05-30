@@ -22,17 +22,14 @@ def main():
     ingest_from_config_unified(args.config)
 
     # ── Diagnostic plot ───────────────────────────────────────────────────────
-    try:
-        from configobj import ConfigObj
-        cfg = ConfigObj(args.config)
-        alldata_h5 = cfg.get('Ingest', {}).get('output', 'alldata.h5').strip() or 'alldata.h5'
-        outdir = os.path.dirname(os.path.abspath(alldata_h5))
+    from configobj import ConfigObj
+    from PLred.scripts._diagnostics import plot_step2, save_diagnostic
 
-        from PLred.scripts._diagnostics import plot_step2, save_diagnostic
-        fig = plot_step2(alldata_h5)
-        save_diagnostic(fig, outdir, '2_ingest.png')
-    except Exception as e:
-        print(f'Warning: could not save step 2 diagnostic: {e}')
+    cfg        = ConfigObj(args.config)
+    alldata_h5 = cfg.get('Ingest', {}).get('output', 'alldata.h5').strip() or 'alldata.h5'
+    outdir     = os.path.dirname(os.path.abspath(alldata_h5))
+
+    save_diagnostic(plot_step2(alldata_h5), outdir, '2_ingest.png')
 
 
 if __name__ == '__main__':

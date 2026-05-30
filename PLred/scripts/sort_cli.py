@@ -22,18 +22,15 @@ def main():
     script_match_timestamps(args.config)
 
     # ── Diagnostic plot ───────────────────────────────────────────────────────
-    try:
-        from configobj import ConfigObj
-        cfg = ConfigObj(args.config)
-        outname  = cfg.get('Output', {}).get('outname', '.').strip() or '.'
-        filename = cfg.get('Output', {}).get('filename', 'fastcam').strip() or 'fastcam'
-        fastcam_h5 = os.path.join(outname, filename + '.h5')
+    from configobj import ConfigObj
+    from PLred.scripts._diagnostics import plot_step1, save_diagnostic
 
-        from PLred.scripts._diagnostics import plot_step1, save_diagnostic
-        fig = plot_step1(fastcam_h5)
-        save_diagnostic(fig, outname, '1_timestamp_matching.png')
-    except Exception as e:
-        print(f'Warning: could not save step 1 diagnostic: {e}')
+    cfg      = ConfigObj(args.config)
+    outname  = cfg.get('Output', {}).get('outname', '.').strip() or '.'
+    filename = cfg.get('Output', {}).get('filename', 'fastcam').strip() or 'fastcam'
+    fastcam_h5 = os.path.join(outname, filename + '.h5')
+
+    save_diagnostic(plot_step1(fastcam_h5), outname, '1_timestamp_matching.png')
 
 
 if __name__ == '__main__':

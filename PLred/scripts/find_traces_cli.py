@@ -85,19 +85,19 @@ def main():
     )
 
     # ── Diagnostic plot ───────────────────────────────────────────────────────
-    try:
-        outdir = os.path.dirname(os.path.abspath(args.out)) or '.'
-        from PLred.scripts._diagnostics import plot_step5_traces, save_diagnostic
-        fig = plot_step5_traces(
+    from PLred.scripts._diagnostics import plot_step5_traces, save_diagnostic
+
+    outdir = os.path.dirname(os.path.abspath(args.out)) or '.'
+    save_diagnostic(
+        plot_step5_traces(
             flat_fits  = args.flat,
             traces_npz = args.out,
             dark_fits  = args.dark,
             xmin       = args.xmin,
             xmax       = args.xmax,
-        )
-        save_diagnostic(fig, outdir, '5_traces.png')
-    except Exception as e:
-        print(f'Warning: could not save step 5a diagnostic: {e}')
+        ),
+        outdir, '5_traces.png',
+    )
 
 
 if __name__ == '__main__':

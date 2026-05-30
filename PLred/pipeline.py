@@ -10,7 +10,7 @@ Runs the five steps of the spatial response-map / image reconstruction pipeline:
   5  plred-extract → couplingmap.fits  (spectral extraction)
 """
 
-import sys
+import os
 
 
 ALL_STEPS = [1, 2, 3, 4, 5]
@@ -57,19 +57,47 @@ def run_mode1(configname, steps=None):
 def _step1(configname):
     print("\n=== Step 1: Timestamp matching (plred-sort) ===")
     from PLred.sort import script_match_timestamps
+    from configobj import ConfigObj
+    from PLred.scripts._diagnostics import plot_step1, save_diagnostic
+
     script_match_timestamps(configname)
+
+    cfg      = ConfigObj(configname)
+    outname  = cfg.get('Output', {}).get('outname', '.').strip() or '.'
+    filename = cfg.get('Output', {}).get('filename', 'fastcam').strip() or 'fastcam'
+    save_diagnostic(
+        plot_step1(os.path.join(outname, filename + '.h5')),
+        outname, '1_timestamp_matching.png',
+    )
 
 
 def _step2(configname):
     print("\n=== Step 2: Build giant H5 (plred-ingest) ===")
     from PLred.ingest import ingest_from_config_unified
+    from configobj import ConfigObj
+    from PLred.scripts._diagnostics import plot_step2, save_diagnostic
+
     ingest_from_config_unified(configname)
+
+    cfg        = ConfigObj(configname)
+    alldata_h5 = cfg.get('Ingest', {}).get('output', 'alldata.h5').strip() or 'alldata.h5'
+    outdir     = os.path.dirname(os.path.abspath(alldata_h5))
+    save_diagnostic(plot_step2(alldata_h5), outdir, '2_ingest.png')
 
 
 def _step3(configname, pause=True):
     print("\n=== Step 3: ROI viewer cache (plred-roi) ===")
     from PLred.average import build_ROI_access_from_config
+    from configobj import ConfigObj
+    from PLred.scripts._diagnostics import plot_step3, save_diagnostic
+
     build_ROI_access_from_config(configname)
+
+    cfg        = ConfigObj(configname)
+    alldata_h5 = cfg.get('Ingest', {}).get('output', 'alldata.h5').strip() or 'alldata.h5'
+    outdir     = os.path.dirname(os.path.abspath(alldata_h5))
+    save_diagnostic(plot_step3(alldata_h5), outdir, '3_roi.png')
+
     print("\nROI cache written.")
     if pause:
         print("Open PLred/scripts/h5_viewer.html in a browser to explore the data.")
@@ -80,10 +108,63 @@ def _step3(configname, pause=True):
 def _step4(configname):
     print("\n=== Step 4: Spatial averaging (plred-average) ===")
     from PLred.average import average_to_h5_from_config
+    from configobj import ConfigObj
+    from PLred.scripts._diagnostics import plot_step4, save_diagnostic
+
     average_to_h5_from_config(configname)
+
+    cfg    = ConfigObj(configname)
+    map_h5 = cfg.get('Average', {}).get('output', 'map.h5').strip() or 'map.h5'
+    outdir = os.path.dirname(os.path.abspath(map_h5))
+    save_diagnostic(plot_step4(map_h5), outdir, '4_average.png')
 
 
 def _step5(configname):
     print("\n=== Step 5: Spectral extraction (plred-extract) ===")
+    import numpy as np
+    import h5py
+    from configobj import ConfigObj
     from PLred.specextract import extract_from_config
+    from PLred.scripts._diagnostics import (
+        plot_step5_extraction, plot_firstpl_quality, save_diagnostic,
+    )
+
     extract_from_config(configname)
+
+    cfg      = ConfigObj(configname)
+    se_cfg   = cfg.get('Specextract', {})
+    cm_fits  = se_cfg.get('output', 'couplingmap.fits').strip() or 'couplingmap.fits'
+    map_h5   = se_cfg.get('input', '').strip() or None
+    ext_type = se_cfg.get('extractor', 'simple_box').strip()
+    outdir   = os.path.dirname(os.path.abspath(cm_fits))
+
+    save_diagnostic(
+        plot_step5_extraction(cm_fits, map_h5=map_h5),
+        outdir, '5_extraction.png',
+    )
+
+    if ext_type == 'FIRSTPL' and map_h5:
+        model_file = se_cfg.get('model_file', '').strip()
+        roi_str    = se_cfg.get('plcam_roi', '').strip()
+        var_const  = float(se_cfg.get('var_const', 200) or 200)
+        thresh     = float(se_cfg.get('thresh', 0.1) or 0.1)
+        truncate   = int(se_cfg.get('truncate', 0) or 0)
+
+        if model_file and roi_str:
+            plcam_roi = tuple(int(x) for x in roi_str.split(','))
+            with h5py.File(map_h5, 'r') as f:
+                avg_plcam = f['avg_PLcam'][:]
+                nframes   = f['metadata/nframes'][:]
+            ix, iy    = np.unravel_index(np.argmax(nframes), nframes.shape)
+
+            save_diagnostic(
+                plot_firstpl_quality(
+                    model_file = model_file,
+                    ref_image  = avg_plcam[ix, iy],
+                    plcam_roi  = plcam_roi,
+                    var_const  = var_const,
+                    thresh     = thresh,
+                    truncate   = truncate,
+                ),
+                outdir, '5_extraction_quality.png',
+            )
