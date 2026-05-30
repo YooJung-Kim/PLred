@@ -887,6 +887,10 @@ def average_to_h5_from_config(configname):
     roi_str = av.get('plcam_roi', '').strip()
     plcam_roi = tuple(int(x) for x in roi_str.split(',')) if roi_str else None
 
+    # time_chunk: seconds per output chunk (blank = no chunking)
+    tc_str = av.get('time_chunk', '').strip()
+    time_chunk_minutes = float(tc_str) / 60.0 if tc_str else None
+
     return average_to_h5(
         giant_h5=input_h5,
         outpath=outpath,
@@ -901,6 +905,7 @@ def average_to_h5_from_config(configname):
         pix2mas=pix2mas,
         n_bootstrap=n_bootstrap,
         plcam_roi=plcam_roi,
+        time_chunk_minutes=time_chunk_minutes,
     )
 
 

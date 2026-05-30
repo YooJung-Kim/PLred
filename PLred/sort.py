@@ -223,35 +223,70 @@ def script_match_timestamps(configname):
 
     config = ConfigObj(configname)
 
-    fastcam_dir = config['Fastcam']['path']
-    fastcam_start_time = config['Fastcam']['start_time']
-    fastcam_end_time = config['Fastcam']['end_time']
+    # ── Support unified [Sort] section (new) and legacy [Fastcam]/[Output] (old) ──
+    sort_sec = config.get('Sort', {})
+    cameras  = config.get('Cameras', {})
 
-    fastcam_dark_file = config['Fastcam']['dark_file']
-    if fastcam_dark_file.strip() == '':
-        fastcam_dark_start_time = config['Fastcam']['dark_start_time']
-        fastcam_dark_end_time = config['Fastcam']['dark_end_time']
+    if sort_sec.get('fastcam_dir', '').strip():
+        # Unified config format
+        fastcam_dir        = sort_sec['fastcam_dir'].strip()
+        fastcam_start_time = sort_sec.get('fastcam_start_time', '00:00:00').strip()
+        fastcam_end_time   = sort_sec.get('fastcam_end_time',   '23:59:59').strip()
+        fastcam_dark_file  = sort_sec.get('fastcam_dark_file',  '').strip()
+        if not fastcam_dark_file:
+            fastcam_dark_start_time = sort_sec.get('fastcam_dark_start', '').strip()
+            fastcam_dark_end_time   = sort_sec.get('fastcam_dark_end',   '').strip()
+        slowcam_timestamps_dir = sort_sec.get('slowcam_dir', '').strip()
+        try:
+            slowcam_nbin = int(sort_sec.get('slowcam_nbin', 1) or 1)
+        except Exception:
+            slowcam_nbin = 1
+        # Output: [Sort].output is a full path; split into directory + stem
+        sort_output = sort_sec.get('output', 'fastcam.h5').strip() or 'fastcam.h5'
+        outname  = os.path.dirname(os.path.abspath(sort_output)) or '.'
+        filename = os.path.splitext(os.path.basename(sort_output))[0]
+        verbose    = str(sort_sec.get('verbose', 'False')).lower() == 'true'
+        show_plot  = str(sort_sec.get('show_plot', 'False')).lower() == 'true'
+        crop_width = int(sort_sec.get('crop_width', 20) or 20)
+        apply_dtc  = str(sort_sec.get('apply_dead_time_correction', 'True')).lower() == 'true'
+        # Derive psfcam_is_fast from [Cameras].fastcam_role
+        fastcam_role = cameras.get('fastcam_role', 'PSF').strip().upper()
+        psfcam_is_fast = (fastcam_role == 'PSF')
+    else:
+        # Legacy config format
+        fastcam_dir = config['Fastcam']['path']
+        fastcam_start_time = config['Fastcam']['start_time']
+        fastcam_end_time = config['Fastcam']['end_time']
 
-    slowcam_timestamps_dir = config['Slowcam']['timestamp_dir']
-    try:
-        slowcam_nbin = int(config['Slowcam']['nbin'])
-    except Exception:
-        slowcam_nbin = 1
+        fastcam_dark_file = config['Fastcam']['dark_file']
+        if fastcam_dark_file.strip() == '':
+            fastcam_dark_start_time = config['Fastcam']['dark_start_time']
+            fastcam_dark_end_time = config['Fastcam']['dark_end_time']
 
-    outname = config['Output']['outname']
-    filename = config['Output']['filename']
+        slowcam_timestamps_dir = config['Slowcam']['timestamp_dir']
+        try:
+            slowcam_nbin = int(config['Slowcam']['nbin'])
+        except Exception:
+            slowcam_nbin = 1
 
-    verbose = config['Options']['verbose'].lower() == 'true'
-    show_plot = config['Options']['show_plot'].lower() == 'true'
-    crop_width = int(config['Options']['crop_width'])
-    try:
-        apply_dtc = config['Options']['apply_dead_time_correction'].lower() == 'true'
-    except Exception:
-        apply_dtc = True
-    try:
-        psfcam_is_fast = config['Options']['psfcam_is_fast'].lower() == 'true'
-    except Exception:
-        psfcam_is_fast = True  # default: PSFcam is the fast camera
+        outname = config['Output']['outname']
+        filename = config['Output']['filename']
+
+        verbose = config['Options']['verbose'].lower() == 'true'
+        show_plot = config['Options']['show_plot'].lower() == 'true'
+        crop_width = int(config['Options']['crop_width'])
+        try:
+            apply_dtc = config['Options']['apply_dead_time_correction'].lower() == 'true'
+        except Exception:
+            apply_dtc = True
+
+    if sort_sec.get('fastcam_dir', '').strip():
+        pass  # psfcam_is_fast already set from [Cameras].fastcam_role above
+    else:
+        try:
+            psfcam_is_fast = config['Options']['psfcam_is_fast'].lower() == 'true'
+        except Exception:
+            psfcam_is_fast = True
 
     os.makedirs(outname, exist_ok=True)
 

@@ -199,6 +199,7 @@ canvas {
   <input id="file-input" type="file" accept=".h5,.hdf5" style="display:none;">
   <div id="load-progress"><div id="load-progress-bar"></div></div>
   <div id="status">Ready. Load a .h5 by URL or upload directly.</div>
+  <span id="live-badge" style="display:none;background:#dc2626;color:#fff;padding:3px 10px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;letter-spacing:.04em;" title="Click to pause auto-refresh" onclick="stopLiveRefresh()">&#9679; LIVE — refresh every 10s (click to pause)</span>
 </header>
 
 <main>
@@ -324,6 +325,34 @@ let roiClickState = { enabled: false, w: 0, h: 0 };
 let currentH5File = null;
 let currentH5Path = null;
 let h5ModuleReady = null;
+
+// ── live-refresh state ────────────────────────────────────────────────────────
+let _liveRefreshTimer = null;
+let _lastLoadedUrl    = null;
+let _lastLoadedFile   = null;
+
+function startLiveRefresh() {
+  if (_liveRefreshTimer) clearInterval(_liveRefreshTimer);
+  _liveRefreshTimer = setInterval(async () => {
+    try {
+      if (_lastLoadedUrl) {
+        const bytes = await fetchBytes(_lastLoadedUrl);
+        const h5 = await openH5(bytes, _lastLoadedUrl.split('/').pop() || 'roi_access.h5');
+        await loadH5(h5, _lastLoadedUrl);
+      } else if (_lastLoadedFile) {
+        const buf = await readFile(_lastLoadedFile);
+        const h5  = await openH5(buf, _lastLoadedFile.name);
+        await loadH5(h5, _lastLoadedFile.name);
+      }
+    } catch(e) { console.warn('Live refresh error:', e); }
+  }, 10000);
+  document.getElementById('live-badge').style.display = 'inline';
+}
+
+function stopLiveRefresh() {
+  if (_liveRefreshTimer) { clearInterval(_liveRefreshTimer); _liveRefreshTimer = null; }
+  document.getElementById('live-badge').style.display = 'none';
+}
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const statusEl           = document.getElementById('status');
@@ -546,17 +575,30 @@ async function loadH5(h5, label) {
   setProgress(null);
   setStatus(`Loaded: ${label}. Configure filters/grid then click Compute Maps.`);
   if (meta.hasPsf) { try { await loadFrameTab(); } catch(e) { setStatus('Frame load error: ' + e.message); } }
+
+  // Auto-refresh for live_preview files
+  const productType = attrVal(rootAttrs, 'product_type');
+  if (productType === 'live_preview') {
+    startLiveRefresh();
+    setStatus(`LIVE — ${label}. Refreshing every 10s. Configure filters/grid then click Compute Maps.`);
+  } else {
+    stopLiveRefresh();
+  }
 }
 
 async function loadFromUrl() {
   const url = document.getElementById('h5-url').value.trim();
   if (!url) throw new Error('Enter an H5 URL');
+  _lastLoadedUrl  = url;
+  _lastLoadedFile = null;
   const bytes = await fetchBytes(url);
   const h5 = await openH5(bytes, url.split('/').pop() || 'roi_access.h5');
   await loadH5(h5, url);
 }
 
 async function loadFromFile(file) {
+  _lastLoadedFile = file;
+  _lastLoadedUrl  = null;
   const buf = await readFile(file);
   const h5  = await openH5(buf, file.name);
   await loadH5(h5, file.name);

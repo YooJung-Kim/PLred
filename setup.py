@@ -26,6 +26,9 @@ setup(
             "plred-extract = PLred.scripts.extract_cli:main",
             # Master runner
             "plred-run     = PLred.scripts.pipeline_cli:main",
+            # Live observing mode
+            "plred-live-sort = PLred.scripts.live_sort_cli:main",
+            "plred-live-roi  = PLred.scripts.live_roi_cli:main",
             "plred-copy = PLred.scripts.copy:main",
         ],
     },

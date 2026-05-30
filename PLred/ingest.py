@@ -100,7 +100,6 @@ def ingest_to_h5(
         meta1           = json.loads(f['metadata'][()])
 
     N = len(timestamps)
-    psfcam_h, psfcam_w = psfcam_frames.shape[1], psfcam_frames.shape[2]
     psfcam_is_fast = meta1.get('psfcam_is_fast', True)
 
     slowcam_ts_files = meta1['slowcam_timestampfiles']
@@ -109,13 +108,36 @@ def ingest_to_h5(
     matched_indices  = {int(k): v for k, v in meta1['matched_indices'].items()}
     matched_sc_inds  = sorted(matched_indices.keys())   # in time order
 
-    # Resolve PLcam FITS file paths
-    plcam_fits_files = _resolve_plcam_files(slowcam_ts_files, plcam_data_dir)
+    # When psfcam_is_fast=True:  step1 frames = PSFcam,  slowcam FITS = PLcam
+    # When psfcam_is_fast=False: step1 frames = PLcam,   slowcam FITS = PSFcam
+    if psfcam_is_fast:
+        plcam_fits_files = _resolve_plcam_files(slowcam_ts_files, plcam_data_dir)
+        plcam_from_step1 = None          # PLcam comes from FITS
+        psfcam_for_centroid = psfcam_frames
+    else:
+        # PLcam data is already in step1 H5 (fastcam = PLcam was averaged there)
+        plcam_from_step1 = psfcam_frames  # rename for clarity
+        plcam_fits_files = None
+        # PSFcam FITS are the slowcam files; plcam_data_dir overrides their directory
+        psfcam_fits_files = _resolve_plcam_files(slowcam_ts_files, plcam_data_dir)
+        print("psfcam_is_fast=False: PLcam data taken from step1 H5; "
+              "loading PSFcam FITS from slowcam file paths for centroids")
+        psfcam_for_centroid = _load_psfcam_frames_from_fits(
+            psfcam_fits_files, matched_sc_inds, slowcam_fileinds, slowcam_frameinds, N, verbose)
+
+    psfcam_h, psfcam_w = psfcam_for_centroid.shape[1], psfcam_for_centroid.shape[2]
 
     # ------------------------------------------------------------------
-    # 2. Load PLcam dark
+    # 2. Load PLcam dark  (only used when PLcam comes from FITS)
     # ------------------------------------------------------------------
-    if plcam_dark is None:
+    if not psfcam_is_fast:
+        dark_frame = None
+        if plcam_dark is not None:
+            print("WARNING: psfcam_is_fast=False — PLcam dark was already applied "
+                  "in plred-sort. Ignoring supplied plcam_dark.")
+        dark_subtracted = True   # dark was applied in sort.py
+        dark_source = 'applied_in_sort'
+    elif plcam_dark is None:
         dark_frame = None
         if verbose:
             print("No PLcam dark supplied — skipping dark subtraction")
@@ -136,9 +158,13 @@ def ingest_to_h5(
     transpose_plcam = spectral_orientation == 'vertical'
 
     if plcam_type == 'raw':
-        ny, nx, roi = _probe_plcam_shape(plcam_fits_files, plcam_roi, dark_frame)
+        if psfcam_is_fast:
+            ny, nx, roi = _probe_plcam_shape(plcam_fits_files, plcam_roi, dark_frame)
+        else:
+            # PLcam shape comes from step1 frames directly
+            ny, nx, roi = _probe_plcam_shape_from_array(plcam_from_step1, plcam_roi)
         if transpose_plcam:
-            ny, nx = nx, ny   # shape after transposition
+            ny, nx = nx, ny
         if verbose:
             print("PLcam frame shape after ROI%s: (%d, %d)" % (
                 ' + transpose' if transpose_plcam else '', ny, nx))
@@ -155,7 +181,7 @@ def ingest_to_h5(
     centroids = np.zeros((N, 2), dtype='float32')
     peaks     = np.zeros(N,      dtype='float32')
 
-    for i, frame in enumerate(tqdm(psfcam_frames, disable=not verbose)):
+    for i, frame in enumerate(tqdm(psfcam_for_centroid, disable=not verbose)):
         try:
             centroids[i] = subpixel_centroid_2d(frame)
         except Exception:
@@ -172,13 +198,15 @@ def ingest_to_h5(
     # ------------------------------------------------------------------
     os.makedirs(os.path.dirname(os.path.abspath(outpath)), exist_ok=True)
 
-    dark_subtracted = dark_frame is not None
-    if isinstance(plcam_dark, np.ndarray):
-        dark_source = '<array>'
-    elif plcam_dark is not None:
-        dark_source = os.path.abspath(str(plcam_dark))
-    else:
-        dark_source = 'none'
+    if psfcam_is_fast:
+        dark_subtracted = dark_frame is not None
+        if isinstance(plcam_dark, np.ndarray):
+            dark_source = '<array>'
+        elif plcam_dark is not None:
+            dark_source = os.path.abspath(str(plcam_dark))
+        else:
+            dark_source = 'none'
+    # else: dark_subtracted and dark_source already set above for psfcam_is_fast=False
 
     # Dark statistics (useful for quality checks downstream)
     if dark_subtracted:
@@ -318,15 +346,23 @@ def ingest_to_h5(
             )
 
     # ------------------------------------------------------------------
-    # 6. Fill PLcam frames (file by file to keep RAM constant)
+    # 6. Fill PLcam frames
     # ------------------------------------------------------------------
     if plcam_type == 'raw':
-        _write_plcam_frames(
-            outpath, plcam_fits_files, matched_sc_inds,
-            slowcam_fileinds, slowcam_frameinds,
-            dark_frame, roi, N, verbose,
-            transpose=transpose_plcam,
-        )
+        if psfcam_is_fast:
+            # Normal path: PLcam comes from FITS files
+            _write_plcam_frames(
+                outpath, plcam_fits_files, matched_sc_inds,
+                slowcam_fileinds, slowcam_frameinds,
+                dark_frame, roi, N, verbose,
+                transpose=transpose_plcam,
+            )
+        else:
+            # PLcam data is already in plcam_from_step1 (fastcam averaged frames)
+            _write_plcam_frames_from_array(
+                outpath, plcam_from_step1, matched_sc_inds, roi, N, verbose,
+                transpose=transpose_plcam,
+            )
 
     print("Done. Giant H5 written to %s" % outpath)
     return outpath
@@ -399,6 +435,80 @@ def ingest_from_config(configname):
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _probe_plcam_shape_from_array(plcam_array, plcam_roi):
+    """Determine PLcam frame shape when frames come from the step1 H5 array."""
+    full_ny, full_nx = plcam_array.shape[1], plcam_array.shape[2]
+    if plcam_roi is not None:
+        y0, y1, x0, x1 = plcam_roi
+        ny, nx = y1 - y0, x1 - x0
+        roi = (y0, y1, x0, x1)
+    else:
+        ny, nx = full_ny, full_nx
+        roi = None
+    return ny, nx, roi
+
+
+def _load_psfcam_frames_from_fits(psfcam_files, matched_sc_inds,
+                                   slowcam_fileinds, slowcam_frameinds, N, verbose):
+    """Load PSFcam frames from FITS when psfcam_is_fast=False (PSFcam = slowcam)."""
+    # Determine frame shape from first available file
+    psf_h = psf_w = None
+    for fpath in psfcam_files:
+        if os.path.exists(fpath):
+            sample = fits.getdata(fpath)
+            psf_h, psf_w = sample.shape[-2], sample.shape[-1]
+            break
+    if psf_h is None:
+        raise FileNotFoundError("No PSFcam FITS files found: %s" % psfcam_files[:3])
+
+    out = np.zeros((N, psf_h, psf_w), dtype='float32')
+
+    # Build file_idx → [(out_idx, frame_idx)] mapping
+    file_map = {}
+    for out_idx, sc_ind in enumerate(matched_sc_inds):
+        file_idx  = int(slowcam_fileinds[sc_ind])
+        frame_idx = int(slowcam_frameinds[sc_ind])
+        file_map.setdefault(file_idx, []).append((out_idx, frame_idx))
+
+    for file_idx, entries in tqdm(sorted(file_map.items()),
+                                  desc='Loading PSFcam frames', disable=not verbose):
+        fpath = psfcam_files[file_idx]
+        if not os.path.exists(fpath):
+            print("WARNING: PSFcam FITS not found: %s — leaving zeros" % fpath)
+            continue
+        try:
+            hdul = fits.open(fpath, memmap=True)
+            data = hdul[0].data
+        except Exception:
+            hdul = fits.open(fpath, memmap=False)
+            data = hdul[0].data
+        with hdul:
+            for out_idx, frame_idx in entries:
+                out[out_idx] = data[frame_idx].astype('float32')
+
+    return out
+
+
+def _write_plcam_frames_from_array(outpath, plcam_array, matched_sc_inds,
+                                    roi, N, verbose, transpose=False):
+    """Write PLcam frames directly from an in-memory array (psfcam_is_fast=False path)."""
+    n_written = 0
+    with h5py.File(outpath, 'r+') as h5f:
+        ds = h5f['plcam/frames']
+        for out_idx, sc_ind in enumerate(tqdm(matched_sc_inds,
+                                               desc='Writing PLcam frames',
+                                               disable=not verbose)):
+            frame = plcam_array[out_idx].astype('float32')
+            if roi is not None:
+                y0, y1, x0, x1 = roi
+                frame = frame[y0:y1, x0:x1]
+            if transpose:
+                frame = frame.T
+            ds[out_idx] = frame
+            n_written += 1
+    print("Wrote %d / %d PLcam frames (from step1 array)" % (n_written, N))
+
 
 def _resolve_plcam_files(slowcam_ts_files, plcam_data_dir):
     """
@@ -552,7 +662,10 @@ def ingest_from_config_unified(configname):
 
     step1_h5 = ingest.get('step1_h5', '').strip()
     if not step1_h5:
-        raise ValueError("[Ingest] step1_h5 is required")
+        # Fall back to [Sort].output from unified config
+        step1_h5 = cfg.get('Sort', {}).get('output', '').strip()
+    if not step1_h5:
+        raise ValueError("[Ingest] step1_h5 is required (or set [Sort] output)")
 
     outpath = ingest.get('output', 'alldata.h5').strip() or 'alldata.h5'
 
@@ -566,6 +679,9 @@ def ingest_from_config_unified(configname):
     plcam_roi = tuple(int(x) for x in roi_str.split(',')) if roi_str else None
 
     orientation = instrument.get('spectral_orientation', 'horizontal').strip().lower()
+
+    # [ROIViewer].roi falls back to plcam_roi — store for build_ROI_access_from_config
+    _ = cfg.get('ROIViewer', {})
 
     return ingest_to_h5(
         step1_h5=step1_h5,

@@ -73,39 +73,30 @@ def plot_step1(fastcam_h5):
     import h5py
 
     with h5py.File(fastcam_h5, 'r') as f:
-        frames     = f['frames'][:]       # (N, h, w)
-        centroids  = f['metadata'][()]    # metadata is a JSON string
-        # centroids and peaks are not stored in step-1 H5; use frame max as proxy
-        peaks = np.array([float(fr.max()) for fr in frames])
-        cx = np.full(len(frames), np.nan)
-        cy = np.full(len(frames), np.nan)
-        try:
-            import json
-            meta = json.loads(f['metadata'][()])
-            # step-1 H5 has no centroids — skip centroid panel if unavailable
-        except Exception:
-            pass
-
-    N = len(frames)
-    n_show = min(6, N)
-    inds = np.linspace(0, N - 1, n_show, dtype=int)
+        N = f['frames'].shape[0]
+        n_show = min(6, N)
+        inds = np.linspace(0, N - 1, n_show, dtype=int)
+        # Load only the frames we'll show + sample for peak histogram
+        sample_inds = np.linspace(0, N - 1, min(200, N), dtype=int)
+        frames_shown  = np.array([f['frames'][i] for i in inds])
+        peaks_sample  = np.array([float(f['frames'][i].max()) for i in sample_inds])
 
     fig = _figure(figsize=(12, 4))
     gs  = fig.add_gridspec(1, n_show + 1, wspace=0.3)
 
-    # Left col: peak histogram
+    # Left col: peak histogram (from sample)
     ax0 = fig.add_subplot(gs[0, 0])
-    ax0.hist(peaks, bins=20, color='steelblue', edgecolor='none', alpha=0.8)
+    ax0.hist(peaks_sample, bins=20, color='steelblue', edgecolor='none', alpha=0.8)
     ax0.set_xlabel('PSF peak (counts)')
     ax0.set_ylabel('Frame count')
-    ax0.set_title('PSF peak distribution')
+    ax0.set_title('PSF peak distribution\n(sampled)')
     ax0.grid(alpha=0.3)
 
-    # Right cols: frame mosaic
-    vmax = np.nanpercentile(frames, 99)
+    # Right cols: frame mosaic — vmax from shown frames only
+    vmax = float(np.nanmax(frames_shown))
     for k, idx in enumerate(inds):
         ax = fig.add_subplot(gs[0, k + 1])
-        ax.imshow(frames[idx], origin='upper', cmap='viridis',
+        ax.imshow(frames_shown[k], origin='upper', cmap='viridis',
                   vmin=0, vmax=vmax, aspect='equal')
         ax.set_title(f'frame {idx}', fontsize=8)
         ax.set_xticks([]); ax.set_yticks([])
