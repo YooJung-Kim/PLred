@@ -58,7 +58,7 @@ def _step1(configname):
     print("\n=== Step 1: Timestamp matching (plred-sort) ===")
     from PLred.sort import script_match_timestamps
     from configobj import ConfigObj
-    from PLred.scripts._diagnostics import plot_step1, save_diagnostic
+    from PLred.scripts._diagnostics import plot_step1, save_diagnostic, get_plots_dir
 
     script_match_timestamps(configname)
 
@@ -67,7 +67,7 @@ def _step1(configname):
     filename = cfg.get('Output', {}).get('filename', 'fastcam').strip() or 'fastcam'
     save_diagnostic(
         plot_step1(os.path.join(outname, filename + '.h5')),
-        outname, '1_timestamp_matching.png',
+        get_plots_dir(configname), '1_sort.png',
     )
 
 
@@ -75,28 +75,26 @@ def _step2(configname):
     print("\n=== Step 2: Build giant H5 (plred-ingest) ===")
     from PLred.ingest import ingest_from_config_unified
     from configobj import ConfigObj
-    from PLred.scripts._diagnostics import plot_step2, save_diagnostic
+    from PLred.scripts._diagnostics import plot_step2, save_diagnostic, get_plots_dir
 
     ingest_from_config_unified(configname)
 
     cfg        = ConfigObj(configname)
     alldata_h5 = cfg.get('Ingest', {}).get('output', 'alldata.h5').strip() or 'alldata.h5'
-    outdir     = os.path.dirname(os.path.abspath(alldata_h5))
-    save_diagnostic(plot_step2(alldata_h5), outdir, '2_ingest.png')
+    save_diagnostic(plot_step2(alldata_h5), get_plots_dir(configname), '2_ingest.png')
 
 
 def _step3(configname, pause=True):
     print("\n=== Step 3: ROI viewer cache (plred-roi) ===")
     from PLred.average import build_ROI_access_from_config
     from configobj import ConfigObj
-    from PLred.scripts._diagnostics import plot_step3, save_diagnostic
+    from PLred.scripts._diagnostics import plot_step3, save_diagnostic, get_plots_dir
 
     build_ROI_access_from_config(configname)
 
     cfg        = ConfigObj(configname)
     alldata_h5 = cfg.get('Ingest', {}).get('output', 'alldata.h5').strip() or 'alldata.h5'
-    outdir     = os.path.dirname(os.path.abspath(alldata_h5))
-    save_diagnostic(plot_step3(alldata_h5), outdir, '3_roi.png')
+    save_diagnostic(plot_step3(alldata_h5), get_plots_dir(configname), '3_roi.png')
 
     print("\nROI cache written.")
     if pause:
@@ -108,15 +106,8 @@ def _step3(configname, pause=True):
 def _step4(configname):
     print("\n=== Step 4: Spatial averaging (plred-average) ===")
     from PLred.average import average_to_h5_from_config
-    from configobj import ConfigObj
-    from PLred.scripts._diagnostics import plot_step4, save_diagnostic
 
     average_to_h5_from_config(configname)
-
-    cfg    = ConfigObj(configname)
-    map_h5 = cfg.get('Average', {}).get('output', 'map.h5').strip() or 'map.h5'
-    outdir = os.path.dirname(os.path.abspath(map_h5))
-    save_diagnostic(plot_step4(map_h5), outdir, '4_average.png')
 
 
 def _step5(configname):
@@ -126,21 +117,21 @@ def _step5(configname):
     from configobj import ConfigObj
     from PLred.specextract import extract_from_config
     from PLred.scripts._diagnostics import (
-        plot_step5_extraction, plot_firstpl_quality, save_diagnostic,
+        plot_step5_extraction, plot_firstpl_quality, save_diagnostic, get_plots_dir,
     )
 
     extract_from_config(configname)
 
-    cfg      = ConfigObj(configname)
-    se_cfg   = cfg.get('Specextract', {})
-    cm_fits  = se_cfg.get('output', 'couplingmap.fits').strip() or 'couplingmap.fits'
-    map_h5   = se_cfg.get('input', '').strip() or None
-    ext_type = se_cfg.get('extractor', 'simple_box').strip()
-    outdir   = os.path.dirname(os.path.abspath(cm_fits))
+    cfg       = ConfigObj(configname)
+    se_cfg    = cfg.get('Specextract', {})
+    cm_fits   = se_cfg.get('output', 'couplingmap.fits').strip() or 'couplingmap.fits'
+    map_h5    = se_cfg.get('input', '').strip() or None
+    ext_type  = se_cfg.get('extractor', 'simple_box').strip()
+    plots_dir = get_plots_dir(configname)
 
     save_diagnostic(
         plot_step5_extraction(cm_fits, map_h5=map_h5),
-        outdir, '5_extraction.png',
+        plots_dir, '5_extraction.png',
     )
 
     if ext_type == 'FIRSTPL' and map_h5:
@@ -166,5 +157,5 @@ def _step5(configname):
                     thresh     = thresh,
                     truncate   = truncate,
                 ),
-                outdir, '5_extraction_quality.png',
+                plots_dir, '5_extraction_quality.png',
             )

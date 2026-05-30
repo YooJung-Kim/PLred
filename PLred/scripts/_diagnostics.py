@@ -13,6 +13,28 @@ import numpy as np
 # Shared utility
 # ---------------------------------------------------------------------------
 
+def get_plots_dir(configname):
+    """Return the plots/ subdirectory from [Pipeline].outdir in the config.
+
+    Falls back to a 'plots/' directory next to *configname* when outdir is not set.
+    The path is always relative to the config file's own directory so that running
+    from a different CWD still produces consistent output locations.
+    """
+    try:
+        from configobj import ConfigObj
+        cfg    = ConfigObj(configname)
+        outdir = cfg.get('Pipeline', {}).get('outdir', '').strip()
+    except Exception:
+        outdir = ''
+
+    config_dir = os.path.dirname(os.path.abspath(configname))
+    if outdir:
+        base = outdir if os.path.isabs(outdir) else os.path.join(config_dir, outdir)
+    else:
+        base = config_dir
+    return os.path.join(base, 'plots')
+
+
 def save_diagnostic(fig, outdir, filename):
     """Save *fig* to *outdir/filename* and close it.  Silent on failure."""
     try:

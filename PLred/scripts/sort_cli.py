@@ -23,14 +23,14 @@ def main():
 
     # ── Diagnostic plot ───────────────────────────────────────────────────────
     from configobj import ConfigObj
-    from PLred.scripts._diagnostics import plot_step1, save_diagnostic
+    from PLred.scripts._diagnostics import plot_step1, save_diagnostic, get_plots_dir
 
     cfg      = ConfigObj(args.config)
     outname  = cfg.get('Output', {}).get('outname', '.').strip() or '.'
     filename = cfg.get('Output', {}).get('filename', 'fastcam').strip() or 'fastcam'
     fastcam_h5 = os.path.join(outname, filename + '.h5')
 
-    save_diagnostic(plot_step1(fastcam_h5), outname, '1_timestamp_matching.png')
+    save_diagnostic(plot_step1(fastcam_h5), get_plots_dir(args.config), '1_sort.png')
 
 
 if __name__ == '__main__':

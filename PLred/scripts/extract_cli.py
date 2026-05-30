@@ -26,7 +26,7 @@ def main():
     import h5py
     from configobj import ConfigObj
     from PLred.scripts._diagnostics import (
-        plot_step5_extraction, plot_firstpl_quality, save_diagnostic,
+        plot_step5_extraction, plot_firstpl_quality, save_diagnostic, get_plots_dir,
     )
 
     cfg      = ConfigObj(args.config)
@@ -34,12 +34,12 @@ def main():
     cm_fits  = se_cfg.get('output', 'couplingmap.fits').strip() or 'couplingmap.fits'
     map_h5   = se_cfg.get('input', '').strip() or None
     ext_type = se_cfg.get('extractor', 'simple_box').strip()
-    outdir   = os.path.dirname(os.path.abspath(cm_fits))
+    plots_dir = get_plots_dir(args.config)
 
     # Coupling map overview (all extractor types)
     save_diagnostic(
         plot_step5_extraction(cm_fits, map_h5=map_h5),
-        outdir, '5_extraction.png',
+        plots_dir, '5_extraction.png',
     )
 
     # FIRSTPL 3-panel quality check (image / model / residual)
@@ -67,7 +67,7 @@ def main():
                     thresh     = thresh,
                     truncate   = truncate,
                 ),
-                outdir, '5_extraction_quality.png',
+                plots_dir, '5_extraction_quality.png',
             )
 
 

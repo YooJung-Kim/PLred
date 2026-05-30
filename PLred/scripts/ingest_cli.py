@@ -23,13 +23,12 @@ def main():
 
     # ── Diagnostic plot ───────────────────────────────────────────────────────
     from configobj import ConfigObj
-    from PLred.scripts._diagnostics import plot_step2, save_diagnostic
+    from PLred.scripts._diagnostics import plot_step2, save_diagnostic, get_plots_dir
 
     cfg        = ConfigObj(args.config)
     alldata_h5 = cfg.get('Ingest', {}).get('output', 'alldata.h5').strip() or 'alldata.h5'
-    outdir     = os.path.dirname(os.path.abspath(alldata_h5))
 
-    save_diagnostic(plot_step2(alldata_h5), outdir, '2_ingest.png')
+    save_diagnostic(plot_step2(alldata_h5), get_plots_dir(args.config), '2_ingest.png')
 
 
 if __name__ == '__main__':

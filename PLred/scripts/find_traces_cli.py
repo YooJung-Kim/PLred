@@ -85,9 +85,13 @@ def main():
     )
 
     # ── Diagnostic plot ───────────────────────────────────────────────────────
-    from PLred.scripts._diagnostics import plot_step5_traces, save_diagnostic
+    from PLred.scripts._diagnostics import plot_step5_traces, save_diagnostic, get_plots_dir
 
-    outdir = os.path.dirname(os.path.abspath(args.out)) or '.'
+    if args.config:
+        plots_dir = get_plots_dir(args.config)
+    else:
+        plots_dir = os.path.join(os.path.dirname(os.path.abspath(args.out)) or '.', 'plots')
+
     save_diagnostic(
         plot_step5_traces(
             flat_fits  = args.flat,
@@ -96,7 +100,7 @@ def main():
             xmin       = args.xmin,
             xmax       = args.xmax,
         ),
-        outdir, '5_traces.png',
+        plots_dir, '5_traces.png',
     )
 
 
