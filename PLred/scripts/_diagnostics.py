@@ -384,7 +384,15 @@ def plot_firstpl_quality(model_file, ref_image, plcam_roi,
     )
     xmin_model = int(d['xmin'])
     xmax_model = int(d['xmax'])
-    ny_full    = int(d['ny_full'])
+    nwav_model = xmax_model - xmin_model
+
+    # ny_full may be absent in older model files — infer from matrix shape
+    if 'ny_full' in d:
+        ny_full = int(d['ny_full'])
+    else:
+        # A shape is (nfib*nwav, ny_full*nwav) → ny_full = ncols // nwav
+        ny_full = A_csr.shape[1] // nwav_model
+
     roi_y0     = int(plcam_roi[0])
     roi_x0     = int(plcam_roi[2])
     roi_x1     = int(plcam_roi[3])
