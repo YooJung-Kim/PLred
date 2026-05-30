@@ -44,6 +44,7 @@ def ingest_to_h5(
     plcam_dark=None,
     psfcam_dark=None,
     plcam_data_dir=None,
+    slowcam_data_dir=None,
     plcam_roi=None,
     plcam_spectra=None,
     compression='gzip',
@@ -72,6 +73,10 @@ def ingest_to_h5(
         Directory containing PLcam FITS files.  When supplied, the directory
         part of the timestamp-file paths stored in the Step 1 metadata is
         replaced with this directory.  When None, the paths are used as-is.
+    slowcam_data_dir : str, optional
+        Directory containing PSFcam FITS files when ``psfcam_is_fast=False``.
+        If omitted, ``plcam_data_dir`` is used as a backward-compatible
+        fallback.
     plcam_roi : tuple of int, optional
         (y0, y1, x0, x1) pixel crop applied to every PLcam frame before
         storing.  Strongly recommended for large detectors — reduces both
@@ -119,13 +124,15 @@ def ingest_to_h5(
         # PLcam data is already in step1 H5 (fastcam = PLcam was averaged there)
         plcam_from_step1 = psfcam_frames  # rename for clarity
         plcam_fits_files = None
-        # PSFcam FITS are the slowcam files; plcam_data_dir overrides their directory
-        psfcam_fits_files = _resolve_plcam_files(slowcam_ts_files, plcam_data_dir)
+        # PSFcam FITS are the slowcam files; slowcam_data_dir overrides their directory.
+        # Fall back to plcam_data_dir for older configs that reused the same key.
+        psf_data_dir = slowcam_data_dir if slowcam_data_dir is not None else plcam_data_dir
+        psfcam_fits_files = _resolve_plcam_files(slowcam_ts_files, psf_data_dir)
         print("psfcam_is_fast=False: PLcam data taken from step1 H5; "
               "loading PSFcam FITS from slowcam file paths for centroids")
         psfcam_for_centroid = _load_psfcam_frames_from_fits(
-        psfcam_fits_files, matched_sc_inds, slowcam_fileinds, slowcam_frameinds, N, verbose,
-        psfcam_dark=psfcam_dark)
+            psfcam_fits_files, matched_sc_inds, slowcam_fileinds, slowcam_frameinds, N, verbose,
+            psfcam_dark=psfcam_dark)
 
     psfcam_h, psfcam_w = psfcam_for_centroid.shape[1], psfcam_for_centroid.shape[2]
 
@@ -703,6 +710,12 @@ def ingest_from_config_unified(configname):
     data_dir = ingest.get('plcam_data_dir', '').strip()
     plcam_data_dir = data_dir if data_dir else None
 
+    slowcam_data_dir = ingest.get('slowcam_data_dir', '').strip()
+    if not slowcam_data_dir:
+        # Backward-compatible fallback for older configs that only provided
+        # plcam_data_dir when PSF was the slow camera.
+        slowcam_data_dir = plcam_data_dir
+
     roi_str = ingest.get('plcam_roi', '').strip()
     plcam_roi = tuple(int(x) for x in roi_str.split(',')) if roi_str else None
 
@@ -717,6 +730,7 @@ def ingest_from_config_unified(configname):
         plcam_dark=plcam_dark,
         psfcam_dark=psfcam_dark,
         plcam_data_dir=plcam_data_dir,
+        slowcam_data_dir=slowcam_data_dir,
         plcam_roi=plcam_roi,
         spectral_orientation=orientation,
     )
