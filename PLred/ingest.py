@@ -108,11 +108,22 @@ def ingest_to_h5(
     N = len(timestamps)
     psfcam_is_fast = meta1.get('psfcam_is_fast', True)
 
+    print(f"[ingest_to_h5] N matched frames : {N}")
+    print(f"[ingest_to_h5] psfcam_is_fast   : {psfcam_is_fast}")
+    print(f"[ingest_to_h5] plcam_dark       : {plcam_dark}")
+    print(f"[ingest_to_h5] psfcam_dark      : {psfcam_dark}")
+    print(f"[ingest_to_h5] plcam_data_dir   : {plcam_data_dir}")
+    print(f"[ingest_to_h5] slowcam_data_dir : {slowcam_data_dir}")
+    print(f"[ingest_to_h5] plcam_roi        : {plcam_roi}")
+
     slowcam_ts_files = meta1['slowcam_timestampfiles']
     slowcam_fileinds = np.array(meta1['slowcam_fileinds'])
     slowcam_frameinds = np.array(meta1['slowcam_frameinds'])
     matched_indices  = {int(k): v for k, v in meta1['matched_indices'].items()}
     matched_sc_inds  = sorted(matched_indices.keys())   # in time order
+
+    print(f"[ingest_to_h5] slowcam ts files : {len(slowcam_ts_files)} file(s)")
+    print(f"[ingest_to_h5] first ts file    : {slowcam_ts_files[0] if slowcam_ts_files else 'none'}")
 
     # When psfcam_is_fast=True:  step1 frames = PSFcam,  slowcam FITS = PLcam
     # When psfcam_is_fast=False: step1 frames = PLcam,   slowcam FITS = PSFcam
@@ -120,6 +131,8 @@ def ingest_to_h5(
         plcam_fits_files = _resolve_plcam_files(slowcam_ts_files, plcam_data_dir)
         plcam_from_step1 = None          # PLcam comes from FITS
         psfcam_for_centroid = psfcam_frames
+        print(f"[ingest_to_h5] PLcam FITS files : {len(plcam_fits_files)} file(s)")
+        print(f"[ingest_to_h5] first PLcam file : {plcam_fits_files[0] if plcam_fits_files else 'none'}")
     else:
         # PLcam data is already in step1 H5 (fastcam = PLcam was averaged there)
         plcam_from_step1 = psfcam_frames  # rename for clarity
@@ -128,8 +141,11 @@ def ingest_to_h5(
         # Fall back to plcam_data_dir for older configs that reused the same key.
         psf_data_dir = slowcam_data_dir if slowcam_data_dir is not None else plcam_data_dir
         psfcam_fits_files = _resolve_plcam_files(slowcam_ts_files, psf_data_dir)
-        print("psfcam_is_fast=False: PLcam data taken from step1 H5; "
-              "loading PSFcam FITS from slowcam file paths for centroids")
+        print(f"[ingest_to_h5] psfcam_is_fast=False: PLcam from step1 H5, PSFcam from FITS")
+        print(f"[ingest_to_h5] psf_data_dir    : {psf_data_dir}")
+        print(f"[ingest_to_h5] PSFcam FITS files: {len(psfcam_fits_files)} file(s)")
+        print(f"[ingest_to_h5] first PSFcam file: {psfcam_fits_files[0] if psfcam_fits_files else 'none'}")
+        print(f"[ingest_to_h5] psfcam_dark      : {psfcam_dark}")
         psfcam_for_centroid = _load_psfcam_frames_from_fits(
             psfcam_fits_files, matched_sc_inds, slowcam_fileinds, slowcam_frameinds, N, verbose,
             psfcam_dark=psfcam_dark)
@@ -142,22 +158,22 @@ def ingest_to_h5(
     if not psfcam_is_fast:
         dark_frame = None
         if plcam_dark is not None:
-            print("WARNING: psfcam_is_fast=False — PLcam dark was already applied "
+            print("[ingest_to_h5] WARNING: psfcam_is_fast=False — PLcam dark was already applied "
                   "in plred-sort. Ignoring supplied plcam_dark.")
+        print("[ingest_to_h5] PLcam dark: applied in sort step (dark_source=applied_in_sort)")
         dark_subtracted = True   # dark was applied in sort.py
         dark_source = 'applied_in_sort'
     elif plcam_dark is None:
         dark_frame = None
-        if verbose:
-            print("No PLcam dark supplied — skipping dark subtraction")
+        print("[ingest_to_h5] PLcam dark: none supplied — skipping dark subtraction")
     elif isinstance(plcam_dark, np.ndarray):
         dark_frame = plcam_dark.astype('float32')
+        print(f"[ingest_to_h5] PLcam dark: loaded from array  shape={dark_frame.shape}")
     else:
         dark_frame = fits.getdata(plcam_dark).astype('float32')
         if dark_frame.ndim == 3:
             dark_frame = dark_frame.mean(axis=0)
-        if verbose:
-            print("Loaded PLcam dark: %s  shape %s" % (plcam_dark, dark_frame.shape))
+        print(f"[ingest_to_h5] PLcam dark: loaded from {plcam_dark}  shape={dark_frame.shape}")
 
     # ------------------------------------------------------------------
     # 3. Determine PLcam frame shape (after optional ROI crop)
@@ -174,9 +190,7 @@ def ingest_to_h5(
             ny, nx, roi = _probe_plcam_shape_from_array(plcam_from_step1, plcam_roi)
         if transpose_plcam:
             ny, nx = nx, ny
-        if verbose:
-            print("PLcam frame shape after ROI%s: (%d, %d)" % (
-                ' + transpose' if transpose_plcam else '', ny, nx))
+        print(f"[ingest_to_h5] PLcam frame shape after ROI{' + transpose' if transpose_plcam else ''}: ({ny}, {nx})  roi={roi}")
     else:
         spectra_array = _load_spectra(plcam_spectra, N)
         _, Nlambda, Nport = spectra_array.shape
@@ -293,9 +307,11 @@ def ingest_to_h5(
         meta_grp.create_dataset('t0',         data=t0,             dtype='float64')
         meta_grp.create_dataset('config',     data=json.dumps(config_dict))
         # String array of PLcam FITS files — readable without parsing JSON
+        # plcam_fits_files is None when psfcam_is_fast=False (PLcam comes from step1 H5)
+        _fits_list = plcam_fits_files if plcam_fits_files is not None else []
         meta_grp.create_dataset(
             'plcam_fits_files',
-            data=np.array(plcam_fits_files, dtype=h5py.special_dtype(vlen=str)),
+            data=np.array(_fits_list, dtype=h5py.special_dtype(vlen=str)),
         )
         # Convenience attrs on metadata group — mirrors root for quick access
         meta_grp.attrs['n_frames']    = N
@@ -697,32 +713,44 @@ def _ingest_from_new_config(cfg):
     fastcam_type   = fc_sec.get('type', 'PSF').strip().upper()
     psfcam_is_fast = (fastcam_type == 'PSF')
 
+    print(f"[ingest] Fastcam.type = {fastcam_type}  →  psfcam_is_fast = {psfcam_is_fast}")
+
     # Slowcam dark → routed to the appropriate keyword
     slowcam_dark = sc_sec.get('dark', '').strip()
     if psfcam_is_fast:
         plcam_dark  = slowcam_dark if slowcam_dark else None
         psfcam_dark = None
+        print(f"[ingest] Dark routing: Slowcam.dark → plcam_dark  ({plcam_dark or 'none'})")
     else:
         plcam_dark  = None
         psfcam_dark = slowcam_dark if slowcam_dark else None
+        print(f"[ingest] Dark routing: Slowcam.dark → psfcam_dark ({psfcam_dark or 'none'})")
+        print(f"[ingest] PLcam dark: already applied in sort (Fastcam.dark = {fc_sec.get('dark','').strip() or 'none'})")
 
     # Data directory for the slowcam FITS files
     sc_data_dir = sc_sec.get('data_dir', '').strip() or None
     if psfcam_is_fast:
         plcam_data_dir   = sc_data_dir
         slowcam_data_dir = None
+        print(f"[ingest] PLcam FITS dir: {plcam_data_dir or '(from step1 metadata)'}")
     else:
         plcam_data_dir   = None
         slowcam_data_dir = sc_data_dir
+        print(f"[ingest] PSFcam FITS dir (slowcam_data_dir): {slowcam_data_dir or 'none'}")
+        print(f"[ingest] PLcam frames: taken from step1 H5 (fastcam averaged frames)")
 
     # ROI — strip optional surrounding quotes
     roi_str   = roi_sec.get('PLcam_ROI', '').strip().strip('"').strip("'")
     plcam_roi = tuple(int(x) for x in roi_str.split(',')) if roi_str else None
+    print(f"[ingest] PLcam ROI: {plcam_roi}")
 
     step1_h5 = outputs_sec.get('timestamp_match_output', 'fastcam.h5').strip() or 'fastcam.h5'
     outpath  = outputs_sec.get('ingest_output', 'alldata.h5').strip() or 'alldata.h5'
+    print(f"[ingest] step1_h5 : {step1_h5}")
+    print(f"[ingest] outpath  : {outpath}")
 
     orientation = spec_sec.get('spectral_orientation', 'horizontal').strip().lower()
+    print(f"[ingest] spectral_orientation: {orientation}")
 
     return ingest_to_h5(
         step1_h5=step1_h5,
