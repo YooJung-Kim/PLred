@@ -26,6 +26,7 @@ setup(
             "plred-extract = PLred.scripts.extract_cli:main",
             # Master runner
             "plred-run     = PLred.scripts.pipeline_cli:main",
+            "plred-copy = PLred.scripts.copy:main",
         ],
     },
 )
