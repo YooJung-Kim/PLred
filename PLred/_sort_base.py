@@ -42,7 +42,10 @@ def find_data_between(datadir, obs_start, obs_end, header='', footer=''):
     start = datetime.strptime(obs_start, "%H:%M:%S")
     end = datetime.strptime(obs_end, "%H:%M:%S")
 
-    files = glob.glob(datadir + header + '*' + footer)
+    # Build a platform-correct glob pattern so callers needn't include a
+    # trailing slash on `datadir`.
+    pattern = os.path.join(datadir, header + '*' + footer)
+    files = glob.glob(pattern)
     files = sorted(files)
 
     pattern = r"(\d{2}:\d{2}:\d{2}\.\d+)"
@@ -59,6 +62,9 @@ def find_data_between(datadir, obs_start, obs_end, header='', footer=''):
             if (obstime > start) and (obstime < end):
                 valid_files.append(f)
 
+    if len(files) == 0:
+        # Helpful debug hint when users supply a directory without trailing slash
+        print("glob pattern used: %s" % pattern)
     print("number of files found: %d" % len(valid_files))
 
     return valid_files

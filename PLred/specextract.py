@@ -281,9 +281,23 @@ def extract_to_coupling_map(
     roi_y0 = int(plcam_roi[0]) if plcam_roi is not None else 0
 
     if model_xmin is not None and model_xmax is not None:
-        img_xmin = model_xmin - roi_x0
-        img_xmax = model_xmax - roi_x0
-        img_nx   = avg_plcam.shape[3]
+        if plcam_roi is not None:
+            # Accept any overlap between the detector-space model bounds and the
+            # stored ROI.  Only reject cases where the ROI and model are disjoint.
+            overlap_xmin = max(model_xmin, roi_x0)
+            overlap_xmax = min(model_xmax, int(plcam_roi[3]))
+            if overlap_xmax <= overlap_xmin:
+                raise ValueError(
+                    f"Model xmin/xmax ({model_xmin}, {model_xmax}) has no overlap with "
+                    f"plcam_roi x=[{roi_x0}, {int(plcam_roi[3])})."
+                )
+            img_xmin = overlap_xmin - roi_x0
+            img_xmax = overlap_xmax - roi_x0
+        else:
+            img_xmin = model_xmin
+            img_xmax = model_xmax
+
+        img_nx = avg_plcam.shape[3]
         if img_xmin < 0 or img_xmax > img_nx:
             raise ValueError(
                 f"Model xmin/xmax ({model_xmin}, {model_xmax}) maps to image columns "

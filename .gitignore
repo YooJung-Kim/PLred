@@ -195,4 +195,4 @@ PLred/*.backup*
 PLred/tutorials/timestamp_matching_output/*zarr*
 PLred/tutorials/timestamp_matching_output/*.npz
 PLred/*PLAN.md
-PLred/tutorials/tutorial_output
+PLred/tutorials/tutorial_output*

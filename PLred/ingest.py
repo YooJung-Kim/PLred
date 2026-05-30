@@ -42,6 +42,7 @@ def ingest_to_h5(
     step1_h5,
     outpath,
     plcam_dark=None,
+    psfcam_dark=None,
     plcam_data_dir=None,
     plcam_roi=None,
     plcam_spectra=None,
@@ -123,7 +124,8 @@ def ingest_to_h5(
         print("psfcam_is_fast=False: PLcam data taken from step1 H5; "
               "loading PSFcam FITS from slowcam file paths for centroids")
         psfcam_for_centroid = _load_psfcam_frames_from_fits(
-            psfcam_fits_files, matched_sc_inds, slowcam_fileinds, slowcam_frameinds, N, verbose)
+        psfcam_fits_files, matched_sc_inds, slowcam_fileinds, slowcam_frameinds, N, verbose,
+        psfcam_dark=psfcam_dark)
 
     psfcam_h, psfcam_w = psfcam_for_centroid.shape[1], psfcam_for_centroid.shape[2]
 
@@ -450,7 +452,8 @@ def _probe_plcam_shape_from_array(plcam_array, plcam_roi):
 
 
 def _load_psfcam_frames_from_fits(psfcam_files, matched_sc_inds,
-                                   slowcam_fileinds, slowcam_frameinds, N, verbose):
+                                   slowcam_fileinds, slowcam_frameinds, N, verbose,
+                                   psfcam_dark=None):
     """Load PSFcam frames from FITS when psfcam_is_fast=False (PSFcam = slowcam)."""
     # Determine frame shape from first available file
     psf_h = psf_w = None
@@ -464,6 +467,16 @@ def _load_psfcam_frames_from_fits(psfcam_files, matched_sc_inds,
 
     out = np.zeros((N, psf_h, psf_w), dtype='float32')
 
+    # Load PSF dark if provided
+    dark_frame = None
+    if psfcam_dark is not None:
+        if isinstance(psfcam_dark, np.ndarray):
+            dark_frame = psfcam_dark.astype('float32')
+        else:
+            try:
+                dark_frame = fits.getdata(psfcam_dark).astype('float32')
+            except Exception:
+                dark_frame = None
     # Build file_idx → [(out_idx, frame_idx)] mapping
     file_map = {}
     for out_idx, sc_ind in enumerate(matched_sc_inds):
@@ -485,7 +498,19 @@ def _load_psfcam_frames_from_fits(psfcam_files, matched_sc_inds,
             data = hdul[0].data
         with hdul:
             for out_idx, frame_idx in entries:
-                out[out_idx] = data[frame_idx].astype('float32')
+                frame = data[frame_idx].astype('float32')
+                if dark_frame is not None:
+                    try:
+                        frame = frame - dark_frame
+                    except Exception:
+                        # If shapes mismatch, attempt to collapse or crop dark
+                        df = dark_frame
+                        if df.ndim == 3:
+                            df = df.mean(axis=0)
+                        df = df.astype('float32')
+                        if df.shape == frame.shape:
+                            frame = frame - df
+                out[out_idx] = frame
 
     return out
 
@@ -672,6 +697,9 @@ def ingest_from_config_unified(configname):
     dark = ingest.get('plcam_dark', '').strip()
     plcam_dark = dark if dark else None
 
+    psf_dark = ingest.get('psfcam_dark', '').strip()
+    psfcam_dark = psf_dark if psf_dark else None
+
     data_dir = ingest.get('plcam_data_dir', '').strip()
     plcam_data_dir = data_dir if data_dir else None
 
@@ -687,6 +715,7 @@ def ingest_from_config_unified(configname):
         step1_h5=step1_h5,
         outpath=outpath,
         plcam_dark=plcam_dark,
+        psfcam_dark=psfcam_dark,
         plcam_data_dir=plcam_data_dir,
         plcam_roi=plcam_roi,
         spectral_orientation=orientation,
