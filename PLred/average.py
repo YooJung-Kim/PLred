@@ -49,92 +49,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 from astropy.stats import sigma_clip
 
-try:
-    import zarr
-    _ZARR_AVAILABLE = True
-except ImportError:
-    _ZARR_AVAILABLE = False
 
-
-def _make_zarr_gzip(level):
-    """Return a gzip compressor compatible with installed zarr version(s)."""
-    # Preferred path (works with common zarr + numcodecs setups)
-    try:
-        from numcodecs import GZip as _NumcodecsGZip
-        return _NumcodecsGZip(level=level)
-    except Exception:
-        pass
-
-    # Older zarr exposed GZip directly
-    if _ZARR_AVAILABLE and hasattr(zarr, 'GZip'):
-        return zarr.GZip(level=level)
-
-    # Newer zarr may expose codecs namespace
-    if _ZARR_AVAILABLE and hasattr(zarr, 'codecs') and hasattr(zarr.codecs, 'GzipCodec'):
-        return zarr.codecs.GzipCodec(level=level)
-
-    raise ImportError(
-        "Could not construct a gzip compressor for zarr. "
-        "Install numcodecs (recommended): pip install numcodecs"
-    )
-
-
-def _open_zarr_store(zarr_target, zarr_zip):
-    """Return a Zarr store object/path compatible with installed zarr version(s)."""
-    if not zarr_zip:
-        return zarr_target
-
-    # Older zarr exposed ZipStore at top-level
-    if _ZARR_AVAILABLE and hasattr(zarr, 'ZipStore'):
-        return zarr.ZipStore(zarr_target, mode='w')
-
-    # Newer zarr exposes stores via zarr.storage namespace
-    if _ZARR_AVAILABLE and hasattr(zarr, 'storage') and hasattr(zarr.storage, 'ZipStore'):
-        return zarr.storage.ZipStore(zarr_target, mode='w')
-
-    raise ImportError(
-        "Could not create ZipStore for this zarr version. "
-        "Try upgrading zarr or set zarr_zip=False for directory output."
-    )
-
-
-def _open_zarr_group_for_writing(store):
-    """Open a writable Zarr group in a version-compatible way.
-
-    Prefer Zarr v2 output because numcodecs-style compressors are widely
-    compatible and expected by the downstream HTML workflow.
-    """
-    # zarr>=3 supports explicit zarr_format, which we force to v2 here.
-    try:
-        return zarr.open_group(store, mode='w', zarr_format=2)
-    except TypeError:
-        # Older zarr versions don't expose zarr_format; default behavior is fine.
-        return zarr.open_group(store, mode='w')
-
-
-def _normalize_zarr_output_target(zarr_path):
-    """Return a directory-store base path and matching zip path.
-
-    The directory store is always written to the returned base path. If the
-    input already ends in `.zip`, that suffix is stripped for the directory
-    target.
-    """
-    base = zarr_path[:-4] if zarr_path.endswith('.zip') else zarr_path
-    zip_path = base + '.zip'
-    return base, zip_path
-
-
-def _normalize_h5_output_target(h5_path, zarr_path=None):
-    """Return the standalone ROI-access H5 path.
-
-    If h5_path is not provided, infer a sibling .h5 file from zarr_path.
-    """
-    if h5_path is not None:
-        return h5_path
-    if zarr_path is None:
-        return None
-    base = zarr_path[:-4] if zarr_path.endswith('.zip') else zarr_path
-    return base + '.h5'
 
 
 def _normalize_crop_bounds(crop, shape, label):
@@ -220,22 +135,21 @@ def _has_roi_access(f, key="plcam/roi_access"):
 def build_ROI_access(
     giant_h5,
     roi,
+    h5_path=None,
     out_key="plcam/roi_access",
     chunk_t=2048,
     compression="gzip",
     compression_opts=4,
     overwrite=False,
-    zarr_path=None,
-    zarr_zip=True,
-    zarr_include_metadata=True,
-    zarr_include_psf=False,
-    zarr_psf_roi=None,
-    zarr_psf_chunk_t=256,
-    h5_path=None,
+    include_metadata=True,
+    include_psf=True,
+    psf_roi=None,
+    psf_chunk_t=256,
     verbose=True,
 ):
     """
-    Build a transposed ROI cache for fast pixel time-series reads in explore_grid().
+    Build a transposed ROI cache for fast pixel time-series reads in explore_grid(),
+    and optionally write a standalone viewer H5 with PSF frames and metadata.
 
     Two complementary layouts live in the same giant H5:
 
@@ -244,55 +158,34 @@ def build_ROI_access(
 
     Reading roi_access[local_y, local_x, :] decompresses ceil(N/chunk_t) chunks
     instead of N full-frame chunks, giving ~ny*nx/chunk_t speedup for explore_grid().
-    ROI cache is optional and should cover only the pixels of interest, e.g. a
-    single spectral trace (400×1) or a small sky region.
 
     Parameters
     ----------
     giant_h5 : str
         Path to the giant H5. Opened in r+ mode.
     roi : tuple of int
-        (y0, y1, x0, x1) in original PLcam pixel coordinates.
+        (y0, y1, x0, x1) in local frame pixel coordinates.
+    h5_path : str, optional
+        If given, write a standalone viewer H5 at this path containing:
+        /roi_access, /timestamps, /peaks, /centroids (if include_metadata),
+        and /psf_frames (if include_psf).
     out_key : str
-        HDF5 dataset path for the cache.
+        HDF5 dataset path for the cache inside giant_h5.
     chunk_t : int
         Time-axis chunk size.
     compression, compression_opts : str, int
         HDF5 compression.
     overwrite : bool
         If True, delete and rebuild any existing cache.
-    zarr_path : str, optional
-        If given, also write the cache to a Zarr store at this path.
-        The directory store is always written to the base path. If
-        `zarr_zip=True` (default), a zipped copy is written alongside it.
-        If the provided path ends with `.zip`, that suffix is used for the zip
-        target and stripped for the directory target.
-        Useful for HTML viewers (zarr.js / zarrita compatible).
-        Requires the `zarr` package.
-    zarr_zip : bool
-        If True (default), also write a `.zip` copy in addition to the
-        directory store. If False, write only the directory store.
-    zarr_include_metadata : bool
-        If True and zarr_path is provided, also store per-frame metadata arrays
-        in the Zarr root group:
-          /timestamps  (N,) float64  (seconds from t0)
-          /peaks       (N,) float32
-          /centroids   (N,2) float32
-        and optional root attr 't0' when available.
-    zarr_include_psf : bool
-        If True and zarr_path is provided, also store /psf_frames
-        with shape (N, h, w). This can significantly increase Zarr size.
-    zarr_psf_roi : tuple of int, optional
-        Optional crop applied only to the exported Zarr /psf_frames dataset.
-        The format is (y0, y1, x0, x1) in PSF-frame pixel coordinates. If not
-        given, the full PSF frame is exported.
-    zarr_psf_chunk_t : int
-        Time-axis chunk size for /psf_frames in Zarr when
-        zarr_include_psf=True.
-    h5_path : str, optional
-        If provided, also write a standalone H5 file containing the same
-        ROI-access layout and metadata as the Zarr export. If omitted and
-        zarr_path is provided, a sibling .h5 file is inferred automatically.
+    include_metadata : bool
+        If True and h5_path is given, store /timestamps, /peaks, /centroids
+        and root attr t0 in the standalone H5.
+    include_psf : bool
+        If True and h5_path is given, store /psf_frames in the standalone H5.
+    psf_roi : tuple of int, optional
+        (y0, y1, x0, x1) crop applied to PSF frames before writing. None = full frame.
+    psf_chunk_t : int
+        Time-axis chunk size for /psf_frames in the standalone H5.
     verbose : bool
     """
     y0, y1, x0, x1 = roi
@@ -316,242 +209,105 @@ def build_ROI_access(
             if not overwrite:
                 if verbose:
                     print("'%s' already exists. Pass overwrite=True to rebuild." % out_key)
-                dst = f[out_key]
+                return out_key
             else:
                 if verbose:
                     print("Deleting existing '%s' (overwrite=True)" % out_key)
                 del f[out_key]
-                dst = None
-        else:
-            dst = None
 
         ct = min(chunk_t, N)
 
-        if dst is None:
-            if verbose:
-                print("Building roi_access: roi=(%d,%d,%d,%d)  shape=(%d,%d,%d)  chunks=(1,1,%d)" % (
-                    y0, y1, x0, x1, roi_h, roi_w, N, ct))
-            grp_key, ds_name = out_key.rsplit('/', 1)
-            grp = f.require_group(grp_key)
-            dst = grp.create_dataset(
-                ds_name,
+        if verbose:
+            print("Building roi_access: roi=(%d,%d,%d,%d)  shape=(%d,%d,%d)  chunks=(1,1,%d)" % (
+                y0, y1, x0, x1, roi_h, roi_w, N, ct))
+        grp_key, ds_name = out_key.rsplit('/', 1)
+        grp = f.require_group(grp_key)
+        dst = grp.create_dataset(
+            ds_name,
+            shape=(roi_h, roi_w, N),
+            dtype='float32',
+            chunks=(1, 1, ct),
+            compression=compression,
+            compression_opts=compression_opts,
+        )
+        dst.attrs['roi']    = [y0, y1, x0, x1]
+        dst.attrs['source'] = '/plcam/frames'
+        dst.attrs['layout'] = 'transposed_roi_time_access'
+
+        # ── Standalone viewer H5 ──────────────────────────────────────────────
+        h5_out = None
+        if h5_path is not None:
+            os.makedirs(os.path.dirname(os.path.abspath(h5_path)), exist_ok=True)
+            h5_out = h5py.File(h5_path, 'w')
+            h5_out.attrs['layout']             = 'plred_roi_access_v1'
+            h5_out.attrs['roi']                = [y0, y1, x0, x1]
+            h5_out.attrs['source']             = '/plcam/frames'
+            h5_out.attrs['n_frames']           = int(N)
+            h5_out.attrs['plcam_type']         = str(plcam_type)
+            h5_out.attrs['roi_access_layout']  = 'transposed_roi_time_access'
+            if 'metadata/t0' in f:
+                h5_out.attrs['t0'] = float(f['metadata/t0'][()])
+
+            h5_out.create_dataset(
+                'roi_access',
                 shape=(roi_h, roi_w, N),
                 dtype='float32',
                 chunks=(1, 1, ct),
                 compression=compression,
                 compression_opts=compression_opts,
             )
-            dst.attrs['roi']    = [y0, y1, x0, x1]
-            dst.attrs['source'] = '/plcam/frames'
-            dst.attrs['layout'] = 'transposed_roi_time_access'
 
-        # Open Zarr stores alongside if requested
-        z_dst = None
-        z_root_dir = None
-        z_root_zip = None
-        z_store_zip = None
-        h5_out = None
-        if zarr_path is not None:
-            if not _ZARR_AVAILABLE:
-                raise ImportError(
-                    "zarr is required for zarr_path output. "
-                    "Install with: pip install zarr")
-            compressor = _make_zarr_gzip(level=compression_opts)
-            zarr_dir_target, zarr_zip_target = _normalize_zarr_output_target(zarr_path)
-            h5_target = _normalize_h5_output_target(h5_path, zarr_path)
-
-            z_root_dir = _open_zarr_group_for_writing(zarr_dir_target)
-            z_dst = z_root_dir.create_dataset(
-                'roi_access',
-                shape=(roi_h, roi_w, N), dtype='float32',
-                chunks=(1, 1, ct), compressor=compressor,
-            )
-            z_root_dir.attrs['layout'] = 'plred_roi_access_v1'
-            z_root_dir.attrs['roi'] = [y0, y1, x0, x1]
-            z_root_dir.attrs['source'] = '/plcam/frames'
-            z_root_dir.attrs['n_frames'] = int(N)
-            z_root_dir.attrs['plcam_type'] = str(plcam_type)
-            z_dst.attrs['layout'] = 'transposed_roi_time_access'
-
-            if zarr_zip:
-                z_store_zip = _open_zarr_store(zarr_zip_target, True)
-                z_root_zip = _open_zarr_group_for_writing(z_store_zip)
-                z_zip_dst = z_root_zip.create_dataset(
-                    'roi_access',
-                    shape=(roi_h, roi_w, N), dtype='float32',
-                    chunks=(1, 1, ct), compressor=compressor,
-                )
-                z_root_zip.attrs['layout'] = 'plred_roi_access_v1'
-                z_root_zip.attrs['roi'] = [y0, y1, x0, x1]
-                z_root_zip.attrs['source'] = '/plcam/frames'
-                z_root_zip.attrs['n_frames'] = int(N)
-                z_root_zip.attrs['plcam_type'] = str(plcam_type)
-                z_zip_dst.attrs['layout'] = 'transposed_roi_time_access'
-
-            if h5_target is not None:
-                os.makedirs(os.path.dirname(os.path.abspath(h5_target)), exist_ok=True)
-                h5_out = h5py.File(h5_target, 'w')
-                h5_out.attrs['layout'] = 'plred_roi_access_v1'
-                h5_out.attrs['roi'] = [y0, y1, x0, x1]
-                h5_out.attrs['source'] = '/plcam/frames'
-                h5_out.attrs['n_frames'] = int(N)
-                h5_out.attrs['plcam_type'] = str(plcam_type)
-                if 'metadata/t0' in f:
-                    h5_out.attrs['t0'] = float(f['metadata/t0'][()])
-                h5_out.attrs['roi_access_layout'] = 'transposed_roi_time_access'
-                h5_out.create_dataset(
-                    'roi_access',
-                    shape=(roi_h, roi_w, N),
-                    dtype='float32',
-                    chunks=(1, 1, ct),
-                    compression=compression,
-                    compression_opts=compression_opts,
-                )
-
-            if zarr_include_metadata:
+            if include_metadata:
                 ts = f['metadata/timestamps'][:].astype('float64')
                 pk = f['psfcam/peaks'][:].astype('float32')
                 cc = f['psfcam/centroids'][:].astype('float32')
-                for z_root in filter(None, [z_root_dir, z_root_zip]):
-                    z_ts = z_root.create_dataset(
-                        'timestamps',
-                        shape=ts.shape,
-                        dtype='float64', chunks=(min(ct, N),), compressor=compressor,
-                    )
-                    z_pk = z_root.create_dataset(
-                        'peaks',
-                        shape=pk.shape,
-                        dtype='float32', chunks=(min(ct, N),), compressor=compressor,
-                    )
-                    z_cc = z_root.create_dataset(
-                        'centroids',
-                        shape=cc.shape,
-                        dtype='float32', chunks=(min(ct, N), 2), compressor=compressor,
-                    )
-                    z_ts[:] = ts
-                    z_pk[:] = pk
-                    z_cc[:] = cc
-                if 'metadata/t0' in f:
-                    for z_root in filter(None, [z_root_dir, z_root_zip]):
-                        z_root.attrs['t0'] = float(f['metadata/t0'][()])
+                h5_out.create_dataset('timestamps', data=ts,
+                                      chunks=(min(ct, N),),
+                                      compression=compression,
+                                      compression_opts=compression_opts)
+                h5_out.create_dataset('peaks', data=pk,
+                                      chunks=(min(ct, N),),
+                                      compression=compression,
+                                      compression_opts=compression_opts)
+                h5_out.create_dataset('centroids', data=cc,
+                                      chunks=(min(ct, N), 2),
+                                      compression=compression,
+                                      compression_opts=compression_opts)
 
-                if h5_out is not None:
-                    h5_ts = h5_out.create_dataset(
-                        'timestamps',
-                        shape=ts.shape,
-                        dtype='float64',
-                        chunks=(min(ct, N),),
-                        compression=compression,
-                        compression_opts=compression_opts,
-                    )
-                    h5_pk = h5_out.create_dataset(
-                        'peaks',
-                        shape=pk.shape,
-                        dtype='float32',
-                        chunks=(min(ct, N),),
-                        compression=compression,
-                        compression_opts=compression_opts,
-                    )
-                    h5_cc = h5_out.create_dataset(
-                        'centroids',
-                        shape=cc.shape,
-                        dtype='float32',
-                        chunks=(min(ct, N), 2),
-                        compression=compression,
-                        compression_opts=compression_opts,
-                    )
-                    h5_ts[:] = ts
-                    h5_pk[:] = pk
-                    h5_cc[:] = cc
-
-            if zarr_include_psf:
+            if include_psf:
                 psf_src = f['psfcam/frames']
                 _, psf_h, psf_w = psf_src.shape
-                psf_y0, psf_y1, psf_x0, psf_x1 = _normalize_crop_bounds(
-                    zarr_psf_roi, (psf_h, psf_w), 'zarr_psf_roi')
-                psf_crop_h = psf_y1 - psf_y0
-                psf_crop_w = psf_x1 - psf_x0
-                ct_psf = max(1, min(int(zarr_psf_chunk_t), N))
-                for z_root in filter(None, [z_root_dir, z_root_zip]):
-                    z_psf = z_root.create_dataset(
-                        'psf_frames',
-                        shape=(N, psf_crop_h, psf_crop_w),
-                        dtype='float32',
-                        chunks=(ct_psf, psf_crop_h, psf_crop_w),
-                        compressor=compressor,
-                    )
-                    if verbose:
-                        psf_mb = N * psf_crop_h * psf_crop_w * 4 / 1e6
-                        print(
-                            "Including psf_frames in Zarr: shape=(%d,%d,%d), chunks=(%d,%d,%d), "
-                            "raw_size≈%.0f MB" % (N, psf_crop_h, psf_crop_w, ct_psf, psf_crop_h, psf_crop_w, psf_mb)
-                        )
-                    for k0 in tqdm(range(0, N, ct_psf), desc='Writing zarr psf_frames', disable=not verbose):
-                        k1 = min(k0 + ct_psf, N)
-                        z_psf[k0:k1] = psf_src[k0:k1, psf_y0:psf_y1, psf_x0:psf_x1].astype('float32')
-                z_root_dir.attrs['psf_roi'] = [psf_y0, psf_y1, psf_x0, psf_x1]
-                if z_root_zip is not None:
-                    z_root_zip.attrs['psf_roi'] = [psf_y0, psf_y1, psf_x0, psf_x1]
+                py0, py1, px0, px1 = _normalize_crop_bounds(psf_roi, (psf_h, psf_w), 'psf_roi')
+                ct_psf = max(1, min(int(psf_chunk_t), N))
+                h5_out.attrs['psf_roi'] = [py0, py1, px0, px1]
+                psf_ds = h5_out.create_dataset(
+                    'psf_frames',
+                    shape=(N, py1 - py0, px1 - px0),
+                    dtype='float32',
+                    chunks=(ct_psf, py1 - py0, px1 - px0),
+                    compression=compression,
+                    compression_opts=compression_opts,
+                )
+                for k0 in tqdm(range(0, N, ct_psf), desc='Writing psf_frames', disable=not verbose):
+                    k1 = min(k0 + ct_psf, N)
+                    psf_ds[k0:k1] = psf_src[k0:k1, py0:py1, px0:px1].astype('float32')
 
-                if h5_out is not None:
-                    h5_out.attrs['psf_roi'] = [psf_y0, psf_y1, psf_x0, psf_x1]
-                    h5_psf = h5_out.create_dataset(
-                        'psf_frames',
-                        shape=(N, psf_crop_h, psf_crop_w),
-                        dtype='float32',
-                        chunks=(ct_psf, psf_crop_h, psf_crop_w),
-                        compression=compression,
-                        compression_opts=compression_opts,
-                    )
-                    if verbose:
-                        psf_mb = N * psf_crop_h * psf_crop_w * 4 / 1e6
-                        print(
-                            "Including psf_frames in H5: shape=(%d,%d,%d), chunks=(%d,%d,%d), "
-                            "raw_size≈%.0f MB" % (N, psf_crop_h, psf_crop_w, ct_psf, psf_crop_h, psf_crop_w, psf_mb)
-                        )
-                    for k0 in tqdm(range(0, N, ct_psf), desc='Writing h5 psf_frames', disable=not verbose):
-                        k1 = min(k0 + ct_psf, N)
-                        h5_psf[k0:k1] = psf_src[k0:k1, psf_y0:psf_y1, psf_x0:psf_x1].astype('float32')
-
-            if verbose:
-                print("Also writing Zarr directory store: %s" % zarr_dir_target)
-                if zarr_zip:
-                    print("Also writing Zarr zip store: %s" % zarr_zip_target)
-                if h5_out is not None:
-                    print("Also writing H5 store: %s" % h5_target)
-
+        # ── Fill roi_access (giant H5 + standalone H5) ───────────────────────
         for t0 in tqdm(range(0, N, ct), desc='Building roi_access', disable=not verbose):
             t1 = min(t0 + ct, N)
-            block = src[t0:t1, y0:y1, x0:x1]              # (t1-t0, roi_h, roi_w)
-            transposed = np.moveaxis(block, 0, -1)          # (roi_h, roi_w, t1-t0)
+            block = src[t0:t1, y0:y1, x0:x1]              # (chunk, roi_h, roi_w)
+            transposed = np.moveaxis(block, 0, -1)          # (roi_h, roi_w, chunk)
             dst[:, :, t0:t1] = transposed
-            if z_dst is not None:
-                z_dst[:, :, t0:t1] = transposed
             if h5_out is not None:
                 h5_out['roi_access'][:, :, t0:t1] = transposed
-
-        if zarr_zip and z_store_zip is not None and hasattr(z_store_zip, 'close'):
-            z_store_zip.close()
 
         if h5_out is not None:
             h5_out.close()
 
         if verbose:
-            print("roi_access written to '%s'" % out_key)
-            if zarr_path is not None:
-                zarr_dir_target, zarr_zip_target = _normalize_zarr_output_target(zarr_path)
-                print("Zarr directory written to '%s'" % zarr_dir_target)
-                if zarr_zip:
-                    print("Zarr zip written to '%s'" % zarr_zip_target)
-                h5_target = _normalize_h5_output_target(h5_path, zarr_path)
-                if h5_target is not None:
-                    print("H5 written to '%s'" % h5_target)
-                if zarr_include_metadata:
-                    print("  included: /timestamps, /peaks, /centroids (+ attr t0 if present)")
-                if zarr_include_psf:
-                    print("  included: /psf_frames")
-                    if zarr_psf_roi is not None:
-                        print("  psf crop: %s" % ([psf_y0, psf_y1, psf_x0, psf_x1]))
+            print("roi_access written to '%s' in %s" % (out_key, giant_h5))
+            if h5_path is not None:
+                print("Viewer H5 written to: %s" % h5_path)
 
     return out_key
 
@@ -1165,47 +921,56 @@ def build_ROI_access_from_config(configname):
     Reads [ROIViewer] and [Ingest] sections.
 
     The config roi is in detector-space coordinates (y0, y1, x0, x1).
-    If the alldata.h5 was ingested with a hardware ROI, detector coords are
+    If alldata.h5 was ingested with a hardware ROI, detector coords are
     converted to local frame coords before passing to build_ROI_access().
+
+    Config keys ([ROIViewer]):
+        roi       = y0,y1,x0,x1   detector-space ROI for the PLcam cache
+        h5_path   = roi.h5        standalone viewer H5 output path
+        psf_roi   = y0,y1,x0,x1  optional PSF frame crop (default: full frame)
     """
     import h5py
     from configobj import ConfigObj
     cfg = ConfigObj(configname)
 
-    rv = cfg.get('ROIViewer', {})
+    rv     = cfg.get('ROIViewer', {})
     ingest = cfg.get('Ingest', {})
 
-    # The giant H5 produced by ingest step
     giant_h5 = ingest.get('output', 'alldata.h5').strip() or 'alldata.h5'
 
     roi_str = (rv.get('roi', '') or ingest.get('plcam_roi', '')).strip()
     if not roi_str:
         raise ValueError("[ROIViewer] roi is required")
-    roi_det = tuple(int(x) for x in roi_str.split(','))   # detector-space
+    roi_det = tuple(int(x) for x in roi_str.split(','))
 
-    # Convert detector-space ROI to local frame coordinates.
-    # If the H5 stores the full detector, local == detector.
-    # If the H5 was ingested with a hardware ROI, subtract the ingest offset.
+    # Convert detector-space ROI to local frame coordinates
     with h5py.File(giant_h5, 'r') as f:
-        stored_ny, stored_nx = f['plcam/frames'].shape[1], f['plcam/frames'].shape[2]
-        ingest_roi = list(f.attrs.get('plcam_roi', [0, stored_ny, 0, stored_nx]))
+        stored_ny = int(f['plcam/frames'].shape[1])
+        stored_nx = int(f['plcam/frames'].shape[2])
+        raw_roi   = f.attrs.get('plcam_roi', [0, stored_ny, 0, stored_nx])
+        ingest_roi = [int(v) for v in raw_roi]
 
     iy0, iy1, ix0, ix1 = ingest_roi
     dy0, dy1, dx0, dx1 = roi_det
+    roi_local = (
+        int(max(0, dy0 - iy0)),
+        int(min(stored_ny, dy1 - iy0)),
+        int(max(0, dx0 - ix0)),
+        int(min(stored_nx, dx1 - ix0)),
+    )
 
-    # Local coords = detector coords − ingest offset, clamped to frame bounds
-    ly0 = max(0, dy0 - iy0)
-    ly1 = min(stored_ny, dy1 - iy0)
-    lx0 = max(0, dx0 - ix0)
-    lx1 = min(stored_nx, dx1 - ix0)
-    roi_local = (ly0, ly1, lx0, lx1)
+    h5_path = rv.get('h5_path', '').strip() or None
 
-    zarr_path = rv.get('zarr_path', 'roi.h5').strip() or 'roi.h5'
+    psf_roi_str = rv.get('psf_roi', '').strip()
+    psf_roi = tuple(int(x) for x in psf_roi_str.split(',')) if psf_roi_str else None
 
     return build_ROI_access(
         giant_h5=giant_h5,
         roi=roi_local,
-        zarr_path=zarr_path,
+        h5_path=h5_path,
+        include_metadata=True,
+        include_psf=True,
+        psf_roi=psf_roi,
     )
 
 
