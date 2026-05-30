@@ -75,13 +75,30 @@ def _step2(configname):
     print("\n=== Step 2: Build giant H5 (plred-ingest) ===")
     from PLred.ingest import ingest_from_config_unified
     from configobj import ConfigObj
-    from PLred.scripts._diagnostics import plot_step2, save_diagnostic, get_plots_dir
+    from PLred.scripts._diagnostics import (
+        plot_step2, plot_first_frame_check, save_diagnostic, get_plots_dir,
+    )
 
     ingest_from_config_unified(configname)
 
     cfg        = ConfigObj(configname)
-    alldata_h5 = cfg.get('Ingest', {}).get('output', 'alldata.h5').strip() or 'alldata.h5'
-    save_diagnostic(plot_step2(alldata_h5), get_plots_dir(configname), '2_ingest.png')
+    outputs    = cfg.get('Outputs', {})
+    alldata_h5 = (
+        outputs.get('ingest_output', '').strip()
+        or cfg.get('Ingest', {}).get('output', 'alldata.h5').strip()
+        or 'alldata.h5'
+    )
+    plots_dir  = get_plots_dir(configname)
+    save_diagnostic(plot_step2(alldata_h5), plots_dir, '2_ingest.png')
+
+    try:
+        pix2mas = float(cfg.get('Average', {}).get('pix2mas', 0) or 0) or None
+    except Exception:
+        pix2mas = None
+    save_diagnostic(
+        plot_first_frame_check(alldata_h5, pix2mas=pix2mas),
+        plots_dir, '2_first_frame.png',
+    )
 
 
 def _step3(configname, pause=True):

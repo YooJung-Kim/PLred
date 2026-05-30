@@ -1886,13 +1886,29 @@ def extract_from_config(configname):
     from configobj import ConfigObj
     cfg = ConfigObj(configname)
 
-    se = cfg.get('Specextract', {})
+    se      = cfg.get('Specextract', {})
+    outputs = cfg.get('Outputs', {})
+    roi_sec = cfg.get('ROI', {})
 
-    input_h5  = se.get('input', 'map.h5').strip() or 'map.h5'
-    output    = se.get('output', 'couplingmap.fits').strip() or 'couplingmap.fits'
+    # New config: input = [Outputs].average_output; output = [Outputs].couplingmap_output
+    input_h5 = (
+        outputs.get('average_output', '').strip()
+        or se.get('input', 'map.h5').strip()
+        or 'map.h5'
+    )
+    output = (
+        outputs.get('couplingmap_output', '').strip()
+        or se.get('output', 'couplingmap.fits').strip()
+        or 'couplingmap.fits'
+    )
     ext_type  = se.get('extractor', 'simple_box').strip()
 
-    roi_str = se.get('plcam_roi', '').strip()
+    # ROI: new config [ROI].PLcam_ROI or old [Specextract].plcam_roi or [Specextract].extract_roi
+    roi_str = (
+        roi_sec.get('PLcam_ROI', '').strip().strip('"').strip("'")
+        or se.get('plcam_roi', '').strip()
+        or se.get('extract_roi', '').strip().strip('"').strip("'")
+    )
     plcam_roi = tuple(int(x) for x in roi_str.split(',')) if roi_str else None
 
     wavsol_file = (se.get('wavsol_file', '') or

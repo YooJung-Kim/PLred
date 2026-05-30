@@ -863,10 +863,20 @@ def average_to_h5_from_config(configname):
     from configobj import ConfigObj
     cfg = ConfigObj(configname)
 
-    av = cfg.get('Average', {})
+    av      = cfg.get('Average', {})
+    outputs = cfg.get('Outputs', {})
 
-    input_h5 = av.get('input', 'alldata.h5').strip() or 'alldata.h5'
-    outpath  = av.get('output', 'map.h5').strip() or 'map.h5'
+    # New config: input = [Outputs].ingest_output, output = [Outputs].average_output
+    input_h5 = (
+        outputs.get('ingest_output', '').strip()
+        or av.get('input', 'alldata.h5').strip()
+        or 'alldata.h5'
+    )
+    outpath = (
+        outputs.get('average_output', '').strip()
+        or av.get('output', 'map.h5').strip()
+        or 'map.h5'
+    )
 
     map_n    = int(av.get('map_n', 5))
     map_width = float(av.get('map_width', 30))
@@ -929,10 +939,22 @@ def build_ROI_access_from_config(configname):
 
     rv     = cfg.get('ROIViewer', {})
     ingest = cfg.get('Ingest', {})
+    outputs = cfg.get('Outputs', {})
+    roi_sec = cfg.get('ROI', {})
 
-    giant_h5 = ingest.get('output', 'alldata.h5').strip() or 'alldata.h5'
+    # Support both new config ([Outputs].ingest_output) and old ([Ingest].output)
+    giant_h5 = (
+        outputs.get('ingest_output', '').strip()
+        or ingest.get('output', 'alldata.h5').strip()
+        or 'alldata.h5'
+    )
 
-    roi_str = (rv.get('roi', '') or ingest.get('plcam_roi', '')).strip()
+    # ROI: new config → [ROIViewer].roi or [ROI].PLcam_ROI; old → [Ingest].plcam_roi
+    roi_str = (
+        rv.get('roi', '').strip().strip('"').strip("'")
+        or roi_sec.get('PLcam_ROI', '').strip().strip('"').strip("'")
+        or ingest.get('plcam_roi', '').strip()
+    )
     if not roi_str:
         raise ValueError("[ROIViewer] roi is required")
     roi_det = tuple(int(x) for x in roi_str.split(','))
@@ -953,7 +975,12 @@ def build_ROI_access_from_config(configname):
         int(min(stored_nx, dx1 - ix0)),
     )
 
-    h5_path = rv.get('h5_path', '').strip() or None
+    # h5_path: new config → [Outputs].ROI_viewer_output; old → [ROIViewer].h5_path
+    h5_path = (
+        outputs.get('ROI_viewer_output', '').strip()
+        or rv.get('h5_path', '').strip()
+        or None
+    )
 
     psf_roi_str = rv.get('psf_roi', '').strip()
     psf_roi = tuple(int(x) for x in psf_roi_str.split(',')) if psf_roi_str else None

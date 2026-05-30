@@ -106,6 +106,74 @@ def plot_step1(fastcam_h5):
 
 
 # ---------------------------------------------------------------------------
+# First-frame check  (called after ingest)
+# ---------------------------------------------------------------------------
+
+def plot_first_frame_check(alldata_h5, pix2mas=None):
+    """
+    Two-panel diagnostic for the very first frame after ingest.
+
+    Left  — PSF frame (dark-subtracted, cropped from sort step).
+            vmin=0, colorbar, PSF peak marked with a red cross, pixel scale bar.
+    Right — PL ROI frame (dark-subtracted in ingest).
+            vmin=0, colorbar.
+
+    vmin=0 on both panels lets you verify dark subtraction visually:
+    background should sit near zero if a dark was applied.
+    """
+    import h5py
+
+    with h5py.File(alldata_h5, 'r') as f:
+        psf_frame  = f['psfcam/frames'][0].astype('float32')
+        pl_frame   = f['plcam/frames'][0].astype('float32')
+        plcam_roi  = list(f.attrs.get('plcam_roi', []))
+        pl_dark    = bool(f['plcam'].attrs.get('dark_subtracted', False))
+
+    peak_yx = np.unravel_index(int(np.argmax(psf_frame)), psf_frame.shape)
+
+    fig = _figure(figsize=(11, 4))
+    gs  = fig.add_gridspec(1, 2, wspace=0.42)
+
+    # ── Left: PSF frame ──────────────────────────────────────────────────────
+    ax0  = fig.add_subplot(gs[0, 0])
+    vmax = float(np.nanpercentile(psf_frame, 99.5))
+    im0  = ax0.imshow(psf_frame, origin='upper', cmap='inferno',
+                      vmin=0, vmax=max(vmax, 1e-3), aspect='equal')
+    fig.colorbar(im0, ax=ax0, label='Counts', fraction=0.046, pad=0.04)
+    ax0.plot(peak_yx[1], peak_yx[0], 'r+', ms=14, mew=2,
+             label=f'peak ({peak_yx[1]},{peak_yx[0]})')
+    ax0.legend(fontsize=7, loc='upper right')
+    ax0.set_title('PSF frame 0  (dark sub in sort)', fontsize=9)
+    ax0.set_xlabel('x (px)'); ax0.set_ylabel('y (px)')
+
+    # Pixel / mas scale bar in bottom-left corner
+    h_psf, w_psf = psf_frame.shape
+    bar_px = max(1, w_psf // 4)
+    bx0    = w_psf * 0.06
+    by     = h_psf * 0.90
+    ax0.plot([bx0, bx0 + bar_px], [by, by], 'w-', lw=2.5, solid_capstyle='butt')
+    if pix2mas is not None and pix2mas > 0:
+        lbl = f'{bar_px * pix2mas:.0f} mas'
+    else:
+        lbl = f'{bar_px} px'
+    ax0.text(bx0 + bar_px / 2, by - h_psf * 0.04, lbl,
+             color='white', fontsize=7, ha='center', va='bottom')
+
+    # ── Right: PL ROI frame ──────────────────────────────────────────────────
+    ax1  = fig.add_subplot(gs[0, 1])
+    vmax1 = float(np.nanpercentile(pl_frame, 99.5))
+    im1   = ax1.imshow(pl_frame, origin='upper', cmap='inferno',
+                       vmin=0, vmax=max(vmax1, 1e-3), aspect='auto')
+    fig.colorbar(im1, ax=ax1, label='Counts', fraction=0.046, pad=0.04)
+    roi_str = f'ROI {plcam_roi}' if plcam_roi else 'full frame'
+    ax1.set_title(f'PL frame 0  ({roi_str})  dark-sub={pl_dark}', fontsize=9)
+    ax1.set_xlabel('x (px, local ROI)'); ax1.set_ylabel('y (px)')
+
+    fig.suptitle(f'First-frame check — {os.path.basename(alldata_h5)}', y=1.02)
+    return fig
+
+
+# ---------------------------------------------------------------------------
 # Step 2 — ingest
 # ---------------------------------------------------------------------------
 

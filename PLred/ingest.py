@@ -678,6 +678,65 @@ def _write_plcam_frames(outpath, plcam_files, matched_sc_inds,
 
 
 # ---------------------------------------------------------------------------
+# New config helper  ([Observation] / [Fastcam] / [Slowcam] / [ROI] / [Outputs])
+# ---------------------------------------------------------------------------
+
+def _ingest_from_new_config(cfg):
+    """Parse the new-style config and call ingest_to_h5() with correct dark routing.
+
+    Dark routing rule:
+      Fastcam.type = PSF  (PSF faster) → Slowcam.dark → plcam_dark
+      Fastcam.type = PL   (PL faster)  → Slowcam.dark → psfcam_dark
+    """
+    fc_sec      = cfg.get('Fastcam', {})
+    sc_sec      = cfg.get('Slowcam', {})
+    roi_sec     = cfg.get('ROI', {})
+    spec_sec    = cfg.get('Spectrum', {})
+    outputs_sec = cfg.get('Outputs', {})
+
+    fastcam_type   = fc_sec.get('type', 'PSF').strip().upper()
+    psfcam_is_fast = (fastcam_type == 'PSF')
+
+    # Slowcam dark → routed to the appropriate keyword
+    slowcam_dark = sc_sec.get('dark', '').strip()
+    if psfcam_is_fast:
+        plcam_dark  = slowcam_dark if slowcam_dark else None
+        psfcam_dark = None
+    else:
+        plcam_dark  = None
+        psfcam_dark = slowcam_dark if slowcam_dark else None
+
+    # Data directory for the slowcam FITS files
+    sc_data_dir = sc_sec.get('data_dir', '').strip() or None
+    if psfcam_is_fast:
+        plcam_data_dir   = sc_data_dir
+        slowcam_data_dir = None
+    else:
+        plcam_data_dir   = None
+        slowcam_data_dir = sc_data_dir
+
+    # ROI — strip optional surrounding quotes
+    roi_str   = roi_sec.get('PLcam_ROI', '').strip().strip('"').strip("'")
+    plcam_roi = tuple(int(x) for x in roi_str.split(',')) if roi_str else None
+
+    step1_h5 = outputs_sec.get('timestamp_match_output', 'fastcam.h5').strip() or 'fastcam.h5'
+    outpath  = outputs_sec.get('ingest_output', 'alldata.h5').strip() or 'alldata.h5'
+
+    orientation = spec_sec.get('spectral_orientation', 'horizontal').strip().lower()
+
+    return ingest_to_h5(
+        step1_h5=step1_h5,
+        outpath=outpath,
+        plcam_dark=plcam_dark,
+        psfcam_dark=psfcam_dark,
+        plcam_data_dir=plcam_data_dir,
+        slowcam_data_dir=slowcam_data_dir,
+        plcam_roi=plcam_roi,
+        spectral_orientation=orientation,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Unified config entry point  (reads new [Ingest] / [Instrument] schema)
 # ---------------------------------------------------------------------------
 
@@ -687,9 +746,18 @@ def ingest_from_config_unified(configname):
 
     Reads [Instrument], [Ingest] sections.  The old ingest_from_config()
     (using [Step1]/[PLcam]/[Output] sections) is kept for backward compat.
+
+    New config format ([Observation]/[Fastcam]/[Slowcam]/[ROI]/[Outputs]) is
+    auto-detected and routed accordingly.  Dark routing in the new format:
+      Fastcam.type = PSF → slowcam dark applied to PL frames (plcam_dark)
+      Fastcam.type = PL  → slowcam dark applied to PSF frames (psfcam_dark)
     """
     from configobj import ConfigObj
     cfg = ConfigObj(configname)
+
+    # ── New config format detection ──────────────────────────────────────────
+    if 'Observation' in cfg and cfg.get('Fastcam', {}).get('data_dir', '').strip():
+        return _ingest_from_new_config(cfg)
 
     ingest = cfg.get('Ingest', {})
     instrument = cfg.get('Instrument', {})
