@@ -17,6 +17,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 from astropy.io import fits
 from .imageutils import subpixel_centroid_2d
+from ._sort_base import (
+    find_data_between,
+    validate_timestamp_matching,
+    bin_by_centroids_from_indices,
+    compute_weighted_frame_binning,
+)
 from scipy.ndimage import center_of_mass
 from tqdm import tqdm
 import h5py
@@ -25,39 +31,6 @@ from configobj import ConfigObj
 from datetime import datetime
 from bisect import bisect
 import os, glob, pickle, re
-
-
-# ---------------------------------------------------------------------------
-# File discovery
-# ---------------------------------------------------------------------------
-
-def find_data_between(datadir, obs_start, obs_end, header='', footer=''):
-    '''
-    Find files whose embedded timestamp falls strictly between obs_start and obs_end.
-    File names must contain a timestamp matching HH:MM:SS.ffffff.
-
-    Parameters
-    ----------
-    datadir : str
-    obs_start, obs_end : str  "%H:%M:%S"
-    header, footer : str  filename prefix / suffix filters
-    '''
-    start = datetime.strptime(obs_start, "%H:%M:%S")
-    end   = datetime.strptime(obs_end,   "%H:%M:%S")
-
-    files = sorted(glob.glob(datadir + header + '*' + footer))
-    pattern = r"(\d{2}:\d{2}:\d{2}\.\d+)"
-    valid_files = []
-
-    for f in files:
-        m = re.search(pattern, f)
-        if m:
-            obstime = datetime.strptime(m.group(1)[:13], "%H:%M:%S.%f")
-            if start < obstime < end:
-                valid_files.append(f)
-
-    print("number of files found: %d" % len(valid_files))
-    return valid_files
 
 
 # ---------------------------------------------------------------------------
@@ -122,54 +95,6 @@ def compute_frame_durations(fastcam_timestamp, fastcam_fileinds):
         durations[inds[-1]] = median_dur  # replace inflated inter-file gap
 
     return fastcam_timestamp + durations
-
-
-def validate_timestamp_matching(timestamps1, timestamps2, atol=1e-4):
-    '''
-    Two-pointer match of two sorted Unix-epoch timestamp arrays.
-    Uses float tolerance instead of exact equality.
-    Warns when > 5% of either list is unmatched.
-
-    Parameters
-    ----------
-    timestamps1, timestamps2 : array-like of float  (must be sorted)
-    atol : float  absolute tolerance in seconds (default 0.1 ms)
-
-    Returns
-    -------
-    idx1, idx2 : ndarray bool  – True where timestamps matched
-    '''
-    print("Timestamp1 start: %s, end %s, length %d" % (
-        datetime.fromtimestamp(timestamps1[0]),
-        datetime.fromtimestamp(timestamps1[-1]), len(timestamps1)))
-    print("Timestamp2 start: %s, end %s, length %d" % (
-        datetime.fromtimestamp(timestamps2[0]),
-        datetime.fromtimestamp(timestamps2[-1]), len(timestamps2)))
-
-    idx1 = np.zeros(len(timestamps1), dtype=bool)
-    idx2 = np.zeros(len(timestamps2), dtype=bool)
-    i = j = 0
-    while i < len(timestamps1) and j < len(timestamps2):
-        diff = timestamps1[i] - timestamps2[j]
-        if abs(diff) <= atol:
-            idx1[i] = idx2[j] = True
-            i += 1; j += 1
-        elif diff < 0:
-            i += 1
-        else:
-            j += 1
-
-    n_drop1, n_drop2 = (~idx1).sum(), (~idx2).sum()
-    print("Filtered %d out of timestamp1, %d out of timestamp2" % (n_drop1, n_drop2))
-
-    for label, arr, n_drop in [('timestamp1', timestamps1, n_drop1),
-                                ('timestamp2', timestamps2, n_drop2)]:
-        frac = n_drop / len(arr)
-        if frac > 0.05:
-            print("WARNING: %.1f%% of %s frames were unmatched. "
-                  "Check that both cameras cover the same interval."
-                  % (frac * 100, label))
-    return idx1, idx2
 
 
 def _build_matching_dict(fastcam_timestamp, slowcam_timestamp,
@@ -655,47 +580,6 @@ def plot_matching_diagnostics(h5_path, max_weight_frames=5000):
           % (np.median(nstacks), nstacks.min(), nstacks.max()))
 
     return fig
-
-
-# ---------------------------------------------------------------------------
-# Bin PSF frames by centroid (in-memory, returns indices)
-# ---------------------------------------------------------------------------
-
-def bin_by_centroids_from_indices(psfcamframes, centroids, xbins, ybins):
-    '''
-    Bin PSF-camera frames by centroid position and return per-bin averages
-    and per-bin boolean membership arrays.
-
-    Parameters
-    ----------
-    psfcamframes : ndarray (N, h, w)
-    centroids    : ndarray (N, 2)
-    xbins, ybins : ndarray  bin edges (length map_n+1 each)
-
-    Returns
-    -------
-    psfcam_binned : ndarray (nb_x, nb_y, h, w)
-    num_frames    : ndarray (nb_x, nb_y)
-    idxs          : ndarray bool (nb_x, nb_y, N)
-    '''
-    x, y = centroids[:, 0], centroids[:, 1]
-    nb_x, nb_y = len(xbins) - 1, len(ybins) - 1
-    N = len(centroids)
-
-    psfcam_binned = np.zeros((nb_x, nb_y, psfcamframes.shape[1], psfcamframes.shape[2]))
-    num_frames    = np.zeros((nb_x, nb_y))
-    idxs          = np.zeros((nb_x, nb_y, N), dtype=bool)
-
-    for i in range(nb_x):
-        for j in range(nb_y):
-            mask = ((x >= xbins[i]) & (x < xbins[i+1]) &
-                    (y >= ybins[j]) & (y < ybins[j+1]))
-            idxs[i, j]         = mask
-            num_frames[i, j]   = mask.sum()
-            if num_frames[i, j] > 0:
-                psfcam_binned[i, j] = np.mean(psfcamframes[mask], axis=0)
-
-    return psfcam_binned, num_frames, idxs
 
 
 # ---------------------------------------------------------------------------

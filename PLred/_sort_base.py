@@ -64,18 +64,20 @@ def find_data_between(datadir, obs_start, obs_end, header='', footer=''):
     return valid_files
 
 
-def validate_timestamp_matching(timestamps1, timestamps2):
+def validate_timestamp_matching(timestamps1, timestamps2, atol=1e-4):
     """
-    Validate that timestamps from two data streams match.
-
-    Uses a two-pointer scan to find exact matches between sorted timestamp arrays.
+    Two-pointer match of two sorted Unix-epoch timestamp arrays.
+    Uses float tolerance instead of exact equality.
+    Warns when > 5% of either list is unmatched.
 
     Parameters
     ----------
     timestamps1 : ndarray
-        First timestamp array (unix epoch)
+        First timestamp array (unix epoch, must be sorted)
     timestamps2 : ndarray
-        Second timestamp array (unix epoch)
+        Second timestamp array (unix epoch, must be sorted)
+    atol : float
+        Absolute tolerance in seconds (default 0.1 ms)
 
     Returns
     -------
@@ -84,44 +86,36 @@ def validate_timestamp_matching(timestamps1, timestamps2):
     idx2 : ndarray of bool
         Boolean array indicating which timestamps2 entries matched
     """
-    print(
-        "Timestamp1 start: %s, end %s, length %d "
-        % (
-            datetime.fromtimestamp(timestamps1[0]),
-            datetime.fromtimestamp(timestamps1[-1]),
-            len(timestamps1),
-        )
-    )
-    print(
-        "Timestamp2 start: %s, end %s, length %d "
-        % (
-            datetime.fromtimestamp(timestamps2[0]),
-            datetime.fromtimestamp(timestamps2[-1]),
-            len(timestamps2),
-        )
-    )
+    print("Timestamp1 start: %s, end %s, length %d" % (
+        datetime.fromtimestamp(timestamps1[0]),
+        datetime.fromtimestamp(timestamps1[-1]), len(timestamps1)))
+    print("Timestamp2 start: %s, end %s, length %d" % (
+        datetime.fromtimestamp(timestamps2[0]),
+        datetime.fromtimestamp(timestamps2[-1]), len(timestamps2)))
 
-    idx1 = [False] * len(timestamps1)
-    idx2 = [False] * len(timestamps2)
-
-    i, j = 0, 0
+    idx1 = np.zeros(len(timestamps1), dtype=bool)
+    idx2 = np.zeros(len(timestamps2), dtype=bool)
+    i = j = 0
     while i < len(timestamps1) and j < len(timestamps2):
-        if timestamps1[i] == timestamps2[j]:
-            idx1[i] = True
-            idx2[j] = True
-            i += 1
-            j += 1
-        elif timestamps1[i] < timestamps2[j]:
+        diff = timestamps1[i] - timestamps2[j]
+        if abs(diff) <= atol:
+            idx1[i] = idx2[j] = True
+            i += 1; j += 1
+        elif diff < 0:
             i += 1
         else:
             j += 1
 
-    idx1 = np.array(idx1)
-    idx2 = np.array(idx2)
-    print(
-        "Filtered %d out of timestamp1, %d out of timestamp2"
-        % (np.sum(~(idx1)), np.sum(~(idx2)))
-    )
+    n_drop1, n_drop2 = (~idx1).sum(), (~idx2).sum()
+    print("Filtered %d out of timestamp1, %d out of timestamp2" % (n_drop1, n_drop2))
+
+    for label, arr, n_drop in [('timestamp1', timestamps1, n_drop1),
+                                ('timestamp2', timestamps2, n_drop2)]:
+        frac = n_drop / len(arr)
+        if frac > 0.05:
+            print("WARNING: %.1f%% of %s frames were unmatched. "
+                  "Check that both cameras cover the same interval."
+                  % (frac * 100, label))
 
     return idx1, idx2
 

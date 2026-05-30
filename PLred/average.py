@@ -47,6 +47,7 @@ import os
 from datetime import datetime
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+from .h5_products import create_roi_access_h5, append_roi_access_h5
 from astropy.stats import sigma_clip
 
 
@@ -235,74 +236,62 @@ def build_ROI_access(
         dst.attrs['layout'] = 'transposed_roi_time_access'
 
         # ── Standalone viewer H5 ──────────────────────────────────────────────
-        h5_out = None
         if h5_path is not None:
-            os.makedirs(os.path.dirname(os.path.abspath(h5_path)), exist_ok=True)
-            h5_out = h5py.File(h5_path, 'w')
-            h5_out.attrs['layout']             = 'plred_roi_access_v1'
-            h5_out.attrs['roi']                = [y0, y1, x0, x1]
-            h5_out.attrs['source']             = '/plcam/frames'
-            h5_out.attrs['n_frames']           = int(N)
-            h5_out.attrs['plcam_type']         = str(plcam_type)
-            h5_out.attrs['roi_access_layout']  = 'transposed_roi_time_access'
+            extra_attrs = {
+                'source':            '/plcam/frames',
+                'n_frames':          int(N),
+                'plcam_type':        str(plcam_type),
+                'roi_access_layout': 'transposed_roi_time_access',
+            }
             if 'metadata/t0' in f:
-                h5_out.attrs['t0'] = float(f['metadata/t0'][()])
-
-            h5_out.create_dataset(
-                'roi_access',
-                shape=(roi_h, roi_w, N),
-                dtype='float32',
-                chunks=(1, 1, ct),
-                compression=compression,
-                compression_opts=compression_opts,
-            )
-
-            if include_metadata:
-                ts = f['metadata/timestamps'][:].astype('float64')
-                pk = f['psfcam/peaks'][:].astype('float32')
-                cc = f['psfcam/centroids'][:].astype('float32')
-                h5_out.create_dataset('timestamps', data=ts,
-                                      chunks=(min(ct, N),),
-                                      compression=compression,
-                                      compression_opts=compression_opts)
-                h5_out.create_dataset('peaks', data=pk,
-                                      chunks=(min(ct, N),),
-                                      compression=compression,
-                                      compression_opts=compression_opts)
-                h5_out.create_dataset('centroids', data=cc,
-                                      chunks=(min(ct, N), 2),
-                                      compression=compression,
-                                      compression_opts=compression_opts)
+                extra_attrs['t0'] = float(f['metadata/t0'][()])
 
             if include_psf:
                 psf_src = f['psfcam/frames']
                 _, psf_h, psf_w = psf_src.shape
                 py0, py1, px0, px1 = _normalize_crop_bounds(psf_roi, (psf_h, psf_w), 'psf_roi')
+                extra_attrs['psf_roi'] = [py0, py1, px0, px1]
+
+            create_roi_access_h5(
+                h5_path, roi,
+                attrs=extra_attrs,
+                chunk_t=ct,
+                compression=compression,
+                compression_opts=compression_opts,
+            )
+
+            # Write PSF frames separately (not part of the core schema)
+            if include_psf:
                 ct_psf = max(1, min(int(psf_chunk_t), N))
-                h5_out.attrs['psf_roi'] = [py0, py1, px0, px1]
-                psf_ds = h5_out.create_dataset(
-                    'psf_frames',
-                    shape=(N, py1 - py0, px1 - px0),
-                    dtype='float32',
-                    chunks=(ct_psf, py1 - py0, px1 - px0),
-                    compression=compression,
-                    compression_opts=compression_opts,
-                )
-                for k0 in tqdm(range(0, N, ct_psf), desc='Writing psf_frames', disable=not verbose):
-                    k1 = min(k0 + ct_psf, N)
-                    psf_ds[k0:k1] = psf_src[k0:k1, py0:py1, px0:px1].astype('float32')
+                with h5py.File(h5_path, 'r+') as h5_out:
+                    psf_ds = h5_out.create_dataset(
+                        'psf_frames',
+                        shape=(N, py1 - py0, px1 - px0),
+                        dtype='float32',
+                        chunks=(ct_psf, py1 - py0, px1 - px0),
+                        compression=compression,
+                        compression_opts=compression_opts,
+                    )
+                    for k0 in tqdm(range(0, N, ct_psf), desc='Writing psf_frames', disable=not verbose):
+                        k1 = min(k0 + ct_psf, N)
+                        psf_ds[k0:k1] = psf_src[k0:k1, py0:py1, px0:px1].astype('float32')
 
         # ── Fill roi_access (giant H5 + standalone H5) ───────────────────────
-        for t0 in tqdm(range(0, N, ct), desc='Building roi_access', disable=not verbose):
-            t1 = min(t0 + ct, N)
-            block = src[t0:t1, y0:y1, x0:x1]              # (chunk, roi_h, roi_w)
-            transposed = np.moveaxis(block, 0, -1)          # (roi_h, roi_w, chunk)
-            dst[:, :, t0:t1] = transposed
-            if h5_out is not None:
-                h5_out['roi_access'][:, :, t0:t1] = transposed
+        roi_frames_buf = []
+        for t0_chunk in tqdm(range(0, N, ct), desc='Building roi_access', disable=not verbose):
+            t1_chunk = min(t0_chunk + ct, N)
+            block = src[t0_chunk:t1_chunk, y0:y1, x0:x1]   # (chunk, roi_h, roi_w)
+            transposed = np.moveaxis(block, 0, -1)            # (roi_h, roi_w, chunk)
+            dst[:, :, t0_chunk:t1_chunk] = transposed
+            if h5_path is not None:
+                roi_frames_buf.append(block)
 
-        if h5_out is not None:
-            h5_out.close()
+        if h5_path is not None:
+            all_roi_frames = np.concatenate(roi_frames_buf, axis=0)  # (N, roi_h, roi_w)
+            ts = f['metadata/timestamps'][:].astype('float64') if include_metadata else np.zeros(N)
+            pk = f['psfcam/peaks'][:].astype('float32')        if include_metadata else np.zeros(N, dtype='float32')
+            cc = f['psfcam/centroids'][:].astype('float32')    if include_metadata else np.zeros((N, 2), dtype='float32')
+            append_roi_access_h5(h5_path, all_roi_frames, ts, cc, pk)
 
         if verbose:
             print("roi_access written to '%s' in %s" % (out_key, giant_h5))
