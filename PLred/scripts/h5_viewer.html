@@ -1,0 +1,1175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FITS / H5 Viewer</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500&display=swap');
+:root{
+  --bg:#0a0c10;--panel:#111418;--card:#161b22;--border:#21262d;
+  --accent:#58a6ff;--accent2:#f78166;--accent3:#3fb950;--accent4:#d2a8ff;
+  --text:#e6edf3;--muted:#8b949e;--dim:#30363d;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;font-weight:300;min-height:100vh;overflow-x:hidden;}
+
+/* ── Header ── */
+header{display:flex;align-items:center;gap:12px;padding:12px 20px;background:var(--panel);border-bottom:1px solid var(--border);flex-shrink:0;}
+.logo{font-family:'Space Mono',monospace;font-size:13px;color:var(--accent);letter-spacing:.12em;text-transform:uppercase;}
+.file-info{font-family:'Space Mono',monospace;font-size:11px;color:var(--muted);margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:300px;}
+.hdr-btn{padding:6px 16px;border:none;border-radius:5px;font-family:'DM Sans',sans-serif;font-weight:500;font-size:12px;cursor:pointer;transition:opacity .15s;}
+.hdr-btn:hover{opacity:.82;}
+#file-btn{background:var(--accent);color:#0a0c10;}
+#h5-btn{background:var(--accent4);color:#0a0c10;}
+#file-input,#h5-input{display:none;}
+
+/* ── App ── */
+#app{display:flex;height:calc(100vh - 49px);overflow:hidden;}
+
+/* ── Sidebar ── */
+#sidebar{width:200px;min-width:200px;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto;flex-shrink:0;}
+.sidebar-label{font-family:'Space Mono',monospace;font-size:10px;letter-spacing:.1em;color:var(--muted);padding:12px 14px 6px;text-transform:uppercase;}
+.hdu-btn{display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer;border-left:3px solid transparent;transition:background .12s,border-color .12s;}
+.hdu-btn:hover{background:var(--card);}
+.hdu-btn.active{background:var(--card);border-left-color:var(--accent);}
+.hdu-idx{font-family:'Space Mono',monospace;font-size:10px;color:var(--muted);width:16px;flex-shrink:0;}
+.hdu-name{font-size:13px;font-weight:500;}
+.hdu-shape{font-family:'Space Mono',monospace;font-size:9px;color:var(--muted);margin-top:1px;}
+.sidebar-divider{height:1px;background:var(--border);margin:6px 0;}
+
+/* ── Main ── */
+#main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;}
+
+/* ── Controls ── */
+#controls{background:var(--card);border-bottom:1px solid var(--border);padding:9px 18px;display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;min-height:50px;flex-shrink:0;}
+.ctrl-group{display:flex;flex-direction:column;gap:4px;}
+.ctrl-label{font-family:'Space Mono',monospace;font-size:9px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase;}
+.ctrl-row{display:flex;align-items:center;gap:7px;}
+.ctrl-val{font-family:'Space Mono',monospace;font-size:12px;color:var(--accent);min-width:30px;text-align:center;}
+input[type=range]{-webkit-appearance:none;height:3px;background:var(--dim);border-radius:2px;cursor:pointer;width:130px;}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 2px var(--card);}
+.scale-btn{padding:3px 9px;font-family:'Space Mono',monospace;font-size:10px;background:var(--dim);border:1px solid var(--border);color:var(--muted);border-radius:4px;cursor:pointer;transition:all .12s;}
+.scale-btn.active{background:var(--accent);color:#000;border-color:var(--accent);}
+.text-input{background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:'Space Mono',monospace;font-size:11px;padding:4px 8px;border-radius:4px;outline:none;transition:border-color .15s;}
+.text-input:focus{border-color:var(--accent);}
+.text-input::placeholder{color:var(--dim);}
+.apply-btn{padding:4px 11px;background:var(--accent);color:#000;border:none;border-radius:4px;font-family:'Space Mono',monospace;font-size:10px;cursor:pointer;transition:opacity .12s;}
+.apply-btn:hover{opacity:.8;}
+.hint{font-family:'Space Mono',monospace;font-size:9px;color:var(--dim);margin-top:2px;}
+
+/* ── H5 Filter Panel ── */
+#h5-filter{display:none;background:var(--panel);border-bottom:2px solid var(--accent4);padding:10px 20px;flex-wrap:wrap;gap:18px;align-items:flex-end;flex-shrink:0;}
+#h5-filter.visible{display:flex;}
+#h5-filter .ctrl-label{color:var(--accent4);}
+.filter-apply{padding:6px 18px;background:var(--accent4);color:#000;border:none;border-radius:5px;font-family:'Space Mono',monospace;font-size:10px;cursor:pointer;font-weight:700;transition:opacity .12s;}
+.filter-apply:hover{opacity:.8;}
+.h5-status{font-family:'Space Mono',monospace;font-size:10px;color:var(--accent3);align-self:center;}
+
+/* Dual-handle time range slider */
+.time-range-wrap{display:flex;flex-direction:column;gap:6px;min-width:280px;}
+.time-range-track{position:relative;height:20px;display:flex;align-items:center;}
+.time-range-bg{position:absolute;left:0;right:0;height:4px;background:var(--dim);border-radius:2px;}
+.time-range-fill{position:absolute;height:4px;background:var(--accent4);border-radius:2px;pointer-events:none;}
+.time-range-track input[type=range]{position:absolute;width:100%;-webkit-appearance:none;appearance:none;background:transparent;pointer-events:none;height:4px;margin:0;}
+.time-range-track input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--accent4);box-shadow:0 0 0 2px var(--panel);cursor:pointer;pointer-events:all;}
+.time-range-track input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--accent4);border:2px solid var(--panel);cursor:pointer;pointer-events:all;}
+.time-range-labels{display:flex;justify-content:space-between;font-family:'Space Mono',monospace;font-size:9px;color:var(--muted);}
+.time-range-vals{display:flex;justify-content:space-between;font-family:'Space Mono',monospace;font-size:9px;color:var(--accent4);margin-top:1px;}
+
+/* ── Content area ── */
+#content-area{flex:1;display:flex;overflow:hidden;}
+#nframes-panel{display:none;flex-direction:column;align-items:center;gap:8px;padding:14px 12px;background:var(--panel);border-right:1px solid var(--border);flex-shrink:0;overflow:auto;}
+#nframes-panel.visible{display:flex;}
+.nf-label{font-family:'Space Mono',monospace;font-size:9px;letter-spacing:.08em;color:var(--accent3);text-transform:uppercase;}
+.nf-label-psf{font-family:'Space Mono',monospace;font-size:9px;letter-spacing:.08em;color:var(--accent4);text-transform:uppercase;}
+#nframes-canvas{image-rendering:pixelated;display:block;}
+#avgpsf-canvas{image-rendering:pixelated;display:block;}
+#nframes-panel .panel-divider{width:100%;height:1px;background:var(--border);margin:4px 0;}
+#canvas-area{flex:1;display:flex;align-items:flex-start;justify-content:flex-start;overflow:auto;background:var(--bg);position:relative;padding:22px;gap:18px;}
+
+/* ── Welcome ── */
+#welcome{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--muted);text-align:center;padding:40px;position:absolute;inset:0;}
+#welcome .big{font-size:44px;opacity:.12;}
+#welcome h2{font-weight:400;font-size:18px;color:var(--text);}
+#welcome p{font-size:13px;line-height:1.7;max-width:440px;}
+.welcome-badges{display:flex;gap:10px;margin-top:4px;}
+.badge{padding:4px 12px;border-radius:20px;font-family:'Space Mono',monospace;font-size:10px;border:1px solid;cursor:default;}
+.badge-fits{border-color:var(--accent);color:var(--accent);}
+.badge-h5{border-color:var(--accent4);color:var(--accent4);}
+
+/* ── Multi-fiber grid ── */
+#fiber-grid{display:none;flex-direction:column;gap:18px;align-items:flex-start;}
+#fiber-grid.visible{display:flex;}
+.fiber-row{display:flex;gap:14px;align-items:flex-start;}
+.fiber-map-wrap{display:flex;flex-direction:column;align-items:center;gap:4px;}
+.fiber-map-label{font-family:'Space Mono',monospace;font-size:9px;color:var(--accent2);letter-spacing:.06em;}
+.fiber-map-canvas{image-rendering:pixelated;display:block;border-radius:2px;}
+
+/* ── Single canvas ── */
+#canvas-wrap{display:none;}
+#main-canvas{display:block;image-rendering:pixelated;}
+
+/* ── Spectrum ── */
+#spectrum-view{box-sizing:border-box;}
+.spec-legend-item{display:flex;align-items:center;gap:6px;font-family:'Space Mono',monospace;font-size:10px;color:var(--muted);}
+.spec-legend-swatch{width:22px;height:3px;border-radius:2px;flex-shrink:0;}
+.spec-legend-swatch.sum{height:4px;}
+
+/* ── PSFCAM ── */
+#psf-grid{display:none;flex-direction:row;align-items:flex-start;gap:26px;}
+#psf-grid.visible{display:flex;}
+#psf-table{border-collapse:separate;border-spacing:3px;}
+.psf-cell{width:34px;height:34px;cursor:pointer;border:2px solid transparent;border-radius:3px;transition:border-color .1s,transform .1s;image-rendering:pixelated;}
+.psf-cell:hover{border-color:var(--accent);transform:scale(1.15);z-index:1;position:relative;}
+.psf-cell.selected{border-color:var(--accent2)!important;}
+.psf-detail{display:flex;flex-direction:column;align-items:center;gap:8px;}
+.psf-detail-label{font-family:'Space Mono',monospace;font-size:10px;color:var(--muted);}
+
+/* ── Colorbar ── */
+#colorbar-wrap{display:none;flex-direction:column;align-items:center;gap:6px;flex-shrink:0;padding-top:4px;}
+#colorbar-wrap.visible{display:flex;}
+#colorbar-max,#colorbar-min{font-family:'Space Mono',monospace;font-size:9px;color:var(--muted);}
+#colorbar-canvas{border-radius:3px;}
+
+/* ── Readout ── */
+#readout{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);font-family:'Space Mono',monospace;font-size:10px;color:var(--muted);pointer-events:none;background:rgba(10,12,16,.85);padding:3px 10px;border-radius:4px;border:1px solid var(--border);white-space:nowrap;}
+
+/* ── Bin Frame Explorer Drawer ── */
+#bin-drawer{display:none;position:fixed;inset:0;z-index:200;background:rgba(6,8,12,.7);backdrop-filter:blur(3px);}
+#bin-drawer.open{display:flex;align-items:center;justify-content:center;}
+#bin-drawer-inner{background:var(--panel);border:1px solid var(--border);border-radius:10px;width:min(92vw,1100px);height:min(88vh,680px);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.6);}
+#bin-drawer-header{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--border);flex-shrink:0;}
+#bin-drawer-title{font-family:'Space Mono',monospace;font-size:12px;color:var(--accent2);letter-spacing:.08em;}
+#bin-drawer-meta{font-family:'Space Mono',monospace;font-size:10px;color:var(--muted);margin-left:8px;}
+#bin-drawer-close{margin-left:auto;background:var(--dim);border:none;color:var(--muted);width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;transition:background .12s;}
+#bin-drawer-close:hover{background:var(--accent2);color:#000;}
+#bin-drawer-body{flex:1;display:flex;overflow:hidden;}
+#bin-drawer-left{flex:1;display:flex;flex-direction:column;padding:16px;gap:14px;overflow-y:auto;}
+#bin-drawer-right{width:340px;min-width:280px;border-left:1px solid var(--border);padding:16px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;}
+
+/* Frame navigator */
+.frame-nav{display:flex;align-items:center;gap:10px;flex-shrink:0;}
+.frame-nav-label{font-family:'Space Mono',monospace;font-size:10px;color:var(--muted);white-space:nowrap;}
+#frame-slider{width:100%;flex:1;}
+.nav-arrow{background:var(--dim);border:none;color:var(--text);width:26px;height:26px;border-radius:4px;cursor:pointer;font-size:14px;transition:background .1s;display:flex;align-items:center;justify-content:center;}
+.nav-arrow:hover{background:var(--accent);}
+.frame-info-row{display:flex;gap:16px;flex-wrap:wrap;flex-shrink:0;}
+.frame-stat{display:flex;flex-direction:column;gap:2px;}
+.frame-stat-label{font-family:'Space Mono',monospace;font-size:9px;color:var(--muted);text-transform:uppercase;}
+.frame-stat-val{font-family:'Space Mono',monospace;font-size:12px;color:var(--accent);}
+#frame-psf-canvas{image-rendering:pixelated;border-radius:4px;display:block;}
+.drawer-section-label{font-family:'Space Mono',monospace;font-size:9px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase;margin-bottom:4px;}
+#frame-spec-canvas{display:block;}
+
+/* Loading */
+#loading{display:none;position:fixed;inset:0;background:rgba(10,12,16,.75);align-items:center;justify-content:center;z-index:999;flex-direction:column;gap:16px;}
+#loading.visible{display:flex;}
+.spinner{width:36px;height:36px;border:3px solid var(--dim);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+#loading p{font-family:'Space Mono',monospace;font-size:11px;color:var(--muted);}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">⬡ Viewer</div>
+  <button class="hdr-btn" id="file-btn">Open FITS</button>
+  <button class="hdr-btn" id="h5-btn">Open H5</button>
+  <input type="file" id="file-input" accept=".fits,.fit,.fts">
+  <input type="file" id="h5-input" accept=".h5,.hdf5">
+  <div class="file-info" id="fname">No file loaded</div>
+</header>
+
+<!-- H5 filter bar (hidden until H5 is loaded) -->
+<div id="h5-filter">
+  <div class="ctrl-group">
+    <div class="ctrl-label">Observation time range</div>
+    <div class="time-range-wrap">
+      <div class="time-range-track">
+        <div class="time-range-bg"></div>
+        <div class="time-range-fill" id="time-fill"></div>
+        <input type="range" id="h5-t0-slider" min="0" max="1000" value="0" step="1">
+        <input type="range" id="h5-t1-slider" min="0" max="1000" value="1000" step="1">
+      </div>
+      <div class="time-range-vals">
+        <span id="t0-val">—</span>
+        <span id="t1-val">—</span>
+      </div>
+    </div>
+    <!-- hidden backing inputs still used by recompute logic -->
+    <input type="hidden" id="h5-t0">
+    <input type="hidden" id="h5-t1">
+  </div>
+  <div class="ctrl-group">
+    <div class="ctrl-label">Peak min (Strehl floor)</div>
+    <input class="text-input" id="h5-peak-min" style="width:90px" placeholder="0.0">
+  </div>
+  <div class="ctrl-group">
+    <div class="ctrl-label">Peak max</div>
+    <input class="text-input" id="h5-peak-max" style="width:90px" placeholder="∞">
+  </div>
+  <button class="filter-apply" id="h5-apply">▶ Recompute</button>
+  <div class="h5-status" id="h5-status"></div>
+</div>
+
+<div id="app">
+  <div id="sidebar">
+    <div class="sidebar-label">Extensions</div>
+    <div id="hdu-list"></div>
+  </div>
+  <div id="main">
+    <div id="controls"></div>
+    <div id="content-area">
+      <div id="nframes-panel">
+        <div class="nf-label">NFRAMES</div>
+        <canvas id="nframes-canvas"></canvas>
+        <div class="panel-divider" id="avgpsf-divider" style="display:none"></div>
+        <div class="nf-label-psf" id="avgpsf-label" style="display:none">AVG PSF</div>
+        <canvas id="avgpsf-canvas"></canvas>
+      </div>
+      <div id="canvas-area">
+        <div id="welcome">
+          <div class="big">⬡</div>
+          <h2>Open a file to begin</h2>
+          <p>Supports FITS reduced maps and H5 raw data files. H5 mode lets you filter by time range and peak value before reducing.</p>
+          <div class="welcome-badges">
+            <span class="badge badge-fits">FITS</span>
+            <span class="badge badge-h5">H5 + filter</span>
+          </div>
+        </div>
+        <div id="fiber-grid"></div>
+        <div id="canvas-wrap"><canvas id="main-canvas"></canvas></div>
+        <div id="psf-grid"></div>
+        <div id="spectrum-view" style="display:none;flex-direction:column;gap:10px;width:100%;height:100%;">
+          <canvas id="spectrum-canvas" style="display:block;"></canvas>
+          <div id="spectrum-legend" style="display:flex;gap:18px;padding:0 6px;flex-wrap:wrap;"></div>
+        </div>
+        <div id="colorbar-wrap">
+          <div id="colorbar-max"></div>
+          <canvas id="colorbar-canvas" width="16" height="180"></canvas>
+          <div id="colorbar-min"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="readout"></div>
+
+<!-- Per-bin frame explorer drawer -->
+<div id="bin-drawer">
+  <div id="bin-drawer-inner">
+    <div id="bin-drawer-header">
+      <div id="bin-drawer-title">BIN EXPLORER</div>
+      <div id="bin-drawer-meta"></div>
+      <button id="bin-drawer-close">✕</button>
+    </div>
+    <div id="bin-drawer-body">
+      <div id="bin-drawer-left">
+        <div class="frame-nav">
+          <button class="nav-arrow" id="frame-prev">‹</button>
+          <input type="range" id="frame-slider" min="0" max="0" value="0" step="1">
+          <button class="nav-arrow" id="frame-next">›</button>
+          <span class="frame-nav-label" id="frame-counter">0 / 0</span>
+        </div>
+        <div class="frame-info-row" id="frame-info-row"></div>
+        <div>
+          <div class="drawer-section-label">PSF frame</div>
+          <canvas id="frame-psf-canvas"></canvas>
+        </div>
+      </div>
+      <div id="bin-drawer-right">
+        <div class="drawer-section-label">Spectrum (this frame)</div>
+        <canvas id="frame-spec-canvas"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <p id="loading-msg">Loading…</p>
+</div>
+
+<!-- h5wasm for reading HDF5 in browser -->
+<script src="https://cdn.jsdelivr.net/npm/h5wasm@0.7.7/dist/iife/h5wasm.js"></script>
+
+<script>
+'use strict';
+// ═══════════════════════════════════════════════════════════════════════════════
+// FITS PARSER
+// ═══════════════════════════════════════════════════════════════════════════════
+const FITS=(()=>{
+  function parseHeader(buf,offset){
+    const cards={};let pos=offset,end=false;
+    while(!end){
+      if(pos+2880>buf.byteLength)break;
+      const block=new Uint8Array(buf,pos,2880);
+      for(let i=0;i<36;i++){
+        const card=String.fromCharCode(...block.slice(i*80,i*80+80));
+        const key=card.slice(0,8).trim();
+        if(key==='END'){end=true;break;}
+        if(card[8]==='='){const raw=card.slice(10,80).split('/')[0].trim().replace(/'/g,'').trim();cards[key]=(raw!==''&&!isNaN(raw))?Number(raw):raw;}
+        else if(key){cards[key]=card.slice(8).trim();}
+      }
+      pos+=2880;
+    }
+    return{cards,nextOffset:pos};
+  }
+  function dataSize(c){const bp=c.BITPIX||8,na=c.NAXIS||0;let n=1;for(let i=1;i<=na;i++)n*=(c[`NAXIS${i}`]||0);return n*Math.abs(bp)/8;}
+  function readData(buf,offset,c){
+    const bp=c.BITPIX||-64,na=c.NAXIS||0;
+    const shape=[];for(let i=na;i>=1;i--)shape.push(c[`NAXIS${i}`]||1);
+    const npix=shape.reduce((a,b)=>a*b,1);
+    const dv=new DataView(buf,offset),bs=c.BSCALE??1,bz=c.BZERO??0;
+    let arr;
+    if(bp===-64){arr=new Float64Array(npix);for(let i=0;i<npix;i++)arr[i]=dv.getFloat64(i*8,false)*bs+bz;}
+    else if(bp===-32){arr=new Float32Array(npix);for(let i=0;i<npix;i++)arr[i]=dv.getFloat32(i*4,false)*bs+bz;}
+    else if(bp===16){arr=new Float32Array(npix);for(let i=0;i<npix;i++)arr[i]=dv.getInt16(i*2,false)*bs+bz;}
+    else if(bp===32){arr=new Float32Array(npix);for(let i=0;i<npix;i++)arr[i]=dv.getInt32(i*4,false)*bs+bz;}
+    else arr=new Float32Array(npix);
+    return{data:arr,shape};
+  }
+  function parse(buf){
+    const hdus=[];let offset=0;
+    while(offset<buf.byteLength){
+      if(offset+2880>buf.byteLength)break;
+      try{
+        const{cards,nextOffset}=parseHeader(buf,offset);
+        const name=String(cards.EXTNAME||(hdus.length===0?'PRIMARY':`EXT${hdus.length}`)).trim();
+        const sz=dataSize(cards),dataOffset=nextOffset;
+        let data=null,shape=null;
+        if(sz>0&&dataOffset+sz<=buf.byteLength){const r=readData(buf,dataOffset,cards);data=r.data;shape=r.shape;}
+        hdus.push({name,cards,data,shape});
+        offset=dataOffset+Math.ceil(sz/2880)*2880;
+      }catch(e){break;}
+    }
+    return hdus;
+  }
+  return{parse};
+})();
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COLORMAPS & RENDERING
+// ═══════════════════════════════════════════════════════════════════════════════
+function viridis(t){t=Math.max(0,Math.min(1,t));return[Math.max(0,Math.min(255,Math.round(255*(0.267+1.8*t*t*t-2.28*t*t+0.72*t)))),Math.max(0,Math.min(255,Math.round(255*(0.004+1.42*t-0.62*t*t)))),Math.max(0,Math.min(255,Math.round(255*(0.33+1.5*t-3.1*t*t+2.1*t*t*t))))];}
+function heatmap(t){t=Math.max(0,Math.min(1,t));return[Math.round(255*Math.min(1,t*3)),Math.round(255*Math.max(0,Math.min(1,t*3-1))),Math.round(255*Math.max(0,t*3-2))];}
+function grays(t){const v=Math.round(255*Math.max(0,Math.min(1,t)));return[v,v,v];}
+const COLORMAPS={viridis,heatmap,grays};
+let currentColormap='viridis',currentScale='linear';
+
+function scaledT(v,vmin,vmax){
+  let t=(v-vmin)/(vmax-vmin+1e-30);
+  if(currentScale==='log')t=Math.log1p(Math.max(0,t))/Math.log(2);
+  if(currentScale==='sqrt')t=Math.sqrt(Math.max(0,t));
+  return Math.max(0,Math.min(1,t));
+}
+
+function renderSlice(canvas,data2d,nx,ny,pxScale,vmin,vmax){
+  if(vmin===undefined||vmax===undefined){
+    vmin=Infinity;vmax=-Infinity;
+    for(let i=0;i<data2d.length;i++){if(!isFinite(data2d[i]))continue;if(data2d[i]<vmin)vmin=data2d[i];if(data2d[i]>vmax)vmax=data2d[i];}
+  }
+  canvas.width=nx*pxScale;canvas.height=ny*pxScale;
+  const ctx=canvas.getContext('2d'),img=ctx.createImageData(canvas.width,canvas.height);
+  const cmap=COLORMAPS[currentColormap]||viridis;
+  for(let py=0;py<ny;py++) for(let px=0;px<nx;px++){
+    const[r,g,b]=cmap(scaledT(data2d[py*nx+px],vmin,vmax));
+    for(let sy=0;sy<pxScale;sy++) for(let sx=0;sx<pxScale;sx++){
+      const idx=((py*pxScale+sy)*canvas.width+(px*pxScale+sx))*4;
+      img.data[idx]=r;img.data[idx+1]=g;img.data[idx+2]=b;img.data[idx+3]=255;
+    }
+  }
+  ctx.putImageData(img,0,0);
+  return{vmin,vmax};
+}
+
+function drawColorbar(vmin,vmax){
+  const cb=document.getElementById('colorbar-canvas'),ctx=cb.getContext('2d'),cmap=COLORMAPS[currentColormap]||viridis;
+  for(let y=0;y<cb.height;y++){const[r,g,b]=cmap(1-y/cb.height);ctx.fillStyle=`rgb(${r},${g},${b})`;ctx.fillRect(0,y,16,1);}
+  document.getElementById('colorbar-max').textContent=vmax.toExponential(2);
+  document.getElementById('colorbar-min').textContent=vmin.toExponential(2);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════════════════════════
+let hdus=[],activeHDU=-1;
+const state={primary:{spec:0,fibers:[0]},psfcam:{ix:0,iy:0}};
+const HIDDEN=new Set(['VAR','NORMVAR','NORMSPEC']);
+let _psfNav=null;
+
+// H5 state
+let h5Data=null; // loaded h5wasm file handle
+let h5MapN=15;   // grid size, inferred from keys
+let h5Computed=null; // { avgspecs, avgpsfs, peaks, nframes, timestamps_range, map_n, nfib, n_spec, n_psf }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// UI HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+function showLoading(m){document.getElementById('loading').classList.add('visible');document.getElementById('loading-msg').textContent=m;}
+function hideLoading(){document.getElementById('loading').classList.remove('visible');}
+function hideAll(){
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('fiber-grid').classList.remove('visible');
+  document.getElementById('canvas-wrap').style.display='none';
+  document.getElementById('psf-grid').classList.remove('visible');
+  document.getElementById('spectrum-view').style.display='none';
+  document.getElementById('colorbar-wrap').classList.remove('visible');
+}
+function parseFibers(str,maxIdx){
+  const out=new Set();
+  str.split(/[\s,]+/).filter(Boolean).forEach(p=>{
+    if(p.includes('-')){const[a,b]=p.split('-').map(Number);for(let i=Math.max(0,a);i<=Math.min(maxIdx,b);i++)out.add(i);}
+    else{const n=parseInt(p);if(!isNaN(n)&&n>=0&&n<=maxIdx)out.add(n);}
+  });
+  return[...out].sort((a,b)=>a-b);
+}
+function cmapScaleControls(){
+  return`<div class="ctrl-group"><div class="ctrl-label">Colormap</div><div class="ctrl-row">${['viridis','heatmap','grays'].map(c=>`<button class="scale-btn${currentColormap===c?' active':''}" data-cmap="${c}">${c}</button>`).join('')}</div></div><div class="ctrl-group"><div class="ctrl-label">Scale</div><div class="ctrl-row">${['linear','sqrt','log'].map(s=>`<button class="scale-btn${currentScale===s?' active':''}" data-scale="${s}">${s}</button>`).join('')}</div></div>`;
+}
+function bindCmapScale(ctrl,redraw){
+  ctrl.querySelectorAll('[data-cmap]').forEach(b=>b.onclick=()=>{currentColormap=b.dataset.cmap;ctrl.querySelectorAll('[data-cmap]').forEach(x=>x.classList.toggle('active',x.dataset.cmap===currentColormap));redraw();});
+  ctrl.querySelectorAll('[data-scale]').forEach(b=>b.onclick=()=>{currentScale=b.dataset.scale;ctrl.querySelectorAll('[data-scale]').forEach(x=>x.classList.toggle('active',x.dataset.scale===currentScale));redraw();});
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NFRAMES PINNED PANEL
+// ═══════════════════════════════════════════════════════════════════════════════
+function updateNframesPanel(dataOverride,nx,ny){
+  const panel=document.getElementById('nframes-panel');
+  let data,w,h;
+  if(dataOverride){data=dataOverride;w=nx||h5MapN;h=ny||h5MapN;}
+  else{
+    const hdu=hdus.find(hh=>hh.name.toUpperCase()==='NFRAMES');
+    if(!hdu||!hdu.data){panel.classList.remove('visible');return;}
+    data=hdu.data;[h,w]=hdu.shape;
+  }
+  panel.classList.add('visible');
+  renderSlice(document.getElementById('nframes-canvas'),data,w,h,6);
+  updateAvgPsfPanel();
+}
+
+function updateAvgPsfPanel(){
+  const divider=document.getElementById('avgpsf-divider');
+  const label=document.getElementById('avgpsf-label');
+  const cv=document.getElementById('avgpsf-canvas');
+  if(!h5Computed){divider.style.display='none';label.style.display='none';cv.style.display='none';return;}
+  const{avgpsfs,nframes,map_n:mn,n_psf}=h5Computed;
+  // Grand average: nanmean of all bin avg-PSFs, weighted by nframes in each bin
+  const psfSum=new Float64Array(n_psf*n_psf);
+  const psfW  =new Float64Array(n_psf*n_psf);
+  for(let i=0;i<mn;i++) for(let j=0;j<mn;j++){
+    const wt=nframes[i*mn+j];
+    if(!wt||!isFinite(wt))continue;
+    const base=(i*mn+j)*n_psf*n_psf;
+    for(let p=0;p<n_psf*n_psf;p++){
+      const v=avgpsfs[base+p];
+      if(isFinite(v)){psfSum[p]+=v*wt;psfW[p]+=wt;}
+    }
+  }
+  const avgPsf=new Float64Array(n_psf*n_psf);
+  for(let p=0;p<n_psf*n_psf;p++) avgPsf[p]=psfW[p]>0?psfSum[p]/psfW[p]:NaN;
+  divider.style.display='block';
+  label.style.display='block';
+  cv.style.display='block';
+  renderSlice(cv,avgPsf,n_psf,n_psf,6);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// H5 LOADING & REDUCTION
+// ═══════════════════════════════════════════════════════════════════════════════
+async function loadH5File(file){
+  showLoading(`Loading ${file.name}…`);
+  document.getElementById('fname').textContent=file.name;
+  try{
+    // h5wasm needs the file as ArrayBuffer written to its virtual FS
+    const buf=await file.arrayBuffer();
+    const{FS}=await h5wasm.ready;
+    FS.writeFile('input.h5',new Uint8Array(buf));
+    if(h5Data)h5Data.close();
+    h5Data=new h5wasm.File('input.h5','r');
+
+    // Discover grid size from keys like bin_0_0 … bin_N_N
+    const keys=[...h5Data.keys()].filter(k=>/^bin_\d+_\d+$/.test(k));
+    if(!keys.length)throw new Error('No bin_i_j groups found in H5 file.');
+    let maxI=0,maxJ=0;
+    keys.forEach(k=>{const[,i,j]=k.split('_').map(Number);maxI=Math.max(maxI,i);maxJ=Math.max(maxJ,j);});
+    h5MapN=Math.max(maxI,maxJ)+1;
+
+    // Probe first valid bin to get shapes
+    const probe=h5Data.get(keys[0]);
+    const rawShape=[...probe.get('rawframes').shape];   // [N, n_spec, n_fib]
+    const psfShape=[...probe.get('psfframes').shape];   // [N, n_psf, n_psf]
+    const nFib=rawShape[2], nSpec=rawShape[1], nPsf=psfShape[1];
+
+    // Get global timestamp range for filter defaults
+    let tMin=Infinity,tMax=-Infinity;
+    keys.forEach(k=>{
+      try{const ts=[...h5Data.get(k).get('timestamps').value];ts.forEach(t=>{if(t<tMin)tMin=t;if(t>tMax)tMax=t;});}catch(e){}
+    });
+
+    // Pre-fill filter UI — init dual time slider
+    document.getElementById('h5-peak-min').value='0';
+    document.getElementById('h5-peak-max').value='';
+    document.getElementById('h5-filter').classList.add('visible');
+    document.getElementById('h5-status').textContent=`${keys.length} bins · ${h5MapN}×${h5MapN} grid · ${nSpec} spec ch · ${nFib} fibers · ${nPsf}×${nPsf} PSF`;
+
+    if(isFinite(tMin)){
+      initTimeSlider(tMin, tMax);
+    }
+
+    // Auto-reduce with no filter
+    await recomputeH5(null,null,null,null,h5MapN,nFib,nSpec,nPsf);
+  }catch(err){
+    alert('H5 load error: '+err.message);
+    console.error(err);
+  }
+  hideLoading();
+}
+
+async function recomputeH5(t0,t1,peakMin,peakMax,mapN,nFib,nSpec,nPsf){
+  showLoading('Reducing H5 data…');
+  // Use cached dimensions if not passed
+  if(mapN===undefined&&h5Computed){mapN=h5Computed.map_n;nFib=h5Computed.nfib;nSpec=h5Computed.n_spec;nPsf=h5Computed.n_psf;}
+
+  const avgspecs=new Float64Array(mapN*mapN*nSpec*nFib); // [mapN,mapN,nSpec,nFib]
+  const avgpsfs =new Float64Array(mapN*mapN*nPsf*nPsf);  // [mapN,mapN,nPsf,nPsf]
+  const peaks   =new Float64Array(mapN*mapN);
+  const nframes =new Float64Array(mapN*mapN);
+  // fill NaN
+  avgspecs.fill(NaN);avgpsfs.fill(NaN);peaks.fill(NaN);
+
+  let totalFrames=0;
+  for(let i=0;i<mapN;i++){
+    for(let j=0;j<mapN;j++){
+      const key=`bin_${i}_${j}`;
+      try{
+        const grp=h5Data.get(key);
+        const ts=Float64Array.from(grp.get('timestamps').value);
+        const pk=Float64Array.from(grp.get('peaks').value);
+        // build mask
+        let mask=new Uint8Array(ts.length).fill(1);
+        if(t0!=null) for(let k=0;k<ts.length;k++) if(ts[k]<t0)mask[k]=0;
+        if(t1!=null) for(let k=0;k<ts.length;k++) if(ts[k]>t1)mask[k]=0;
+        if(peakMin!=null) for(let k=0;k<ts.length;k++) if(pk[k]<peakMin)mask[k]=0;
+        if(peakMax!=null) for(let k=0;k<ts.length;k++) if(pk[k]>peakMax)mask[k]=0;
+        const idxs=[];for(let k=0;k<mask.length;k++)if(mask[k])idxs.push(k);
+        if(!idxs.length)continue;
+        nframes[i*mapN+j]=idxs.length;
+        totalFrames+=idxs.length;
+
+        // rawframes: shape [N, nSpec, nFib]
+        const raw=grp.get('rawframes').value; // flat Float32/64
+        // avgspec for this bin
+        const specSum=new Float64Array(nSpec*nFib);
+        const specCount=new Int32Array(nSpec*nFib);
+        for(const fi of idxs){
+          for(let s=0;s<nSpec;s++) for(let f=0;f<nFib;f++){
+            const v=raw[fi*nSpec*nFib+s*nFib+f];
+            if(isFinite(v)){specSum[s*nFib+f]+=v;specCount[s*nFib+f]++;}
+          }
+        }
+        const binBase=(i*mapN+j)*nSpec*nFib;
+        for(let k=0;k<nSpec*nFib;k++) avgspecs[binBase+k]=specCount[k]>0?specSum[k]/specCount[k]:NaN;
+
+        // psfframes: shape [N, nPsf, nPsf]
+        const psf=grp.get('psfframes').value;
+        const psfSum=new Float64Array(nPsf*nPsf);
+        const psfCount=new Int32Array(nPsf*nPsf);
+        for(const fi of idxs){
+          for(let p=0;p<nPsf*nPsf;p++){
+            const v=psf[fi*nPsf*nPsf+p];
+            if(isFinite(v)){psfSum[p]+=v;psfCount[p]++;}
+          }
+        }
+        const psfBase=(i*mapN+j)*nPsf*nPsf;
+        for(let p=0;p<nPsf*nPsf;p++) avgpsfs[psfBase+p]=psfCount[p]>0?psfSum[p]/psfCount[p]:NaN;
+
+        // mean peak
+        let pkSum=0,pkCnt=0;
+        for(const fi of idxs){if(isFinite(pk[fi])){pkSum+=pk[fi];pkCnt++;}}
+        peaks[i*mapN+j]=pkCnt>0?pkSum/pkCnt:NaN;
+
+      }catch(e){/* bin missing */}
+    }
+  }
+
+  // Store and convert to FITS-like structure so the existing renderers work
+  h5Computed={avgspecs,avgpsfs,peaks,nframes,map_n:mapN,nfib:nFib,n_spec:nSpec,n_psf:nPsf,totalFrames};
+  document.getElementById('h5-status').textContent=`${totalFrames} frames used across ${mapN*mapN} bins`;
+
+  // Build synthetic HDUs that plug into the existing viewer
+  buildHDUsFromH5();
+  hideLoading();
+}
+
+function buildHDUsFromH5(){
+  const{avgspecs,avgpsfs,nframes,map_n:mn,nfib,n_spec,n_psf}=h5Computed;
+  // PRIMARY shape expected by renderPrimary: [ny,nx,nFib,nSpec] (parser-reversed)
+  // avgspecs is stored as [i,j,nSpec,nFib] → need [j,i,nFib,nSpec] for consistent indexing
+  // Actually let's just store it and tell renderPrimary the right layout
+  // We'll synthesize a Float64Array in [mn,mn,nfib,n_spec] order (same as FITS PRIMARY)
+  const primary=new Float64Array(mn*mn*nfib*n_spec);
+  for(let iy=0;iy<mn;iy++) for(let ix=0;ix<mn;ix++) for(let f=0;f<nfib;f++) for(let s=0;s<n_spec;s++){
+    // avgspecs[i*mn+j, nSpec,nFib] stored as avgspecs[(i*mn+j)*nSpec*nFib + s*nFib + f]
+    // renderPrimary expects flat[iy*(nx*nFib*nSpec)+ix*(nFiber*nSpec)+iFiber*nSpec+iSpec]
+    primary[iy*(mn*nfib*n_spec)+ix*(nfib*n_spec)+f*n_spec+s]=avgspecs[(iy*mn+ix)*n_spec*nfib+s*nfib+f];
+  }
+  // PSFCAM: avgpsfs stored as [i*mn+j, nPsf*nPsf]
+  // renderPSFCAM expects shape [mn,mn,n_psf,n_psf] flat: iy*(nx*ny_psf*nx_psf)+ix*(ny_psf*nx_psf)+...
+  const psfFlat=new Float64Array(mn*mn*n_psf*n_psf);
+  for(let iy=0;iy<mn;iy++) for(let ix=0;ix<mn;ix++) for(let p=0;p<n_psf*n_psf;p++)
+    psfFlat[iy*(mn*n_psf*n_psf)+ix*(n_psf*n_psf)+p]=avgpsfs[(iy*mn+ix)*n_psf*n_psf+p];
+
+  hdus=[
+    {name:'PRIMARY',cards:{},data:primary,shape:[mn,mn,nfib,n_spec]},
+    {name:'NFRAMES',cards:{},data:nframes,shape:[mn,mn]},
+    {name:'PSFCAM', cards:{},data:psfFlat, shape:[mn,mn,n_psf,n_psf]},
+  ];
+  buildSidebar();
+  updateNframesPanel();
+  activeHDU=0;
+  renderHDU(0);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PRIMARY RENDERER
+// ═══════════════════════════════════════════════════════════════════════════════
+function renderPrimary(hdu){
+  const[d4,d3,d2,d1]=hdu.shape;
+  const ny=d4,nx=d3,nFiber=d2,nSpec=d1;
+  let iSpec=state.primary.spec;
+  let fibers=state.primary.fibers.filter(f=>f<nFiber);
+  if(!fibers.length)fibers=[0];
+
+  const getSlice=(iSpec,iFiber)=>{
+    const out=new Float64Array(ny*nx);
+    for(let iy=0;iy<ny;iy++) for(let ix=0;ix<nx;ix++)
+      out[iy*nx+ix]=hdu.data[iy*(nx*nFiber*nSpec)+ix*(nFiber*nSpec)+iFiber*nSpec+iSpec];
+    return out;
+  };
+
+  const ctrl=document.getElementById('controls');
+  const buildControls=()=>{
+    ctrl.innerHTML=`
+      <div class="ctrl-group"><div class="ctrl-label">Spectral Channel</div>
+        <div class="ctrl-row"><input type="range" id="spec-slider" min="0" max="${nSpec-1}" value="${iSpec}" step="1">
+        <span class="ctrl-val" id="spec-val">${iSpec}</span><span style="font-family:Space Mono;font-size:9px;color:var(--muted)">/ ${nSpec-1}</span></div>
+      </div>
+      <div class="ctrl-group"><div class="ctrl-label">Fibers <span style="color:var(--dim);font-size:8px">(0–${nFiber-1}, 5/row)</span></div>
+        <div class="ctrl-row"><input class="text-input" id="fiber-input" type="text" value="${fibers.join(', ')}" placeholder="0, 1, 2 or 0-4" style="width:180px">
+        <button class="apply-btn" id="fiber-apply">Apply</button></div>
+        <div class="hint">Enter or comma-separated · ranges with –</div>
+      </div>
+      ${cmapScaleControls()}`;
+    bindCmapScale(ctrl,draw);
+    document.getElementById('spec-slider').oninput=e=>{iSpec=+e.target.value;state.primary.spec=iSpec;document.getElementById('spec-val').textContent=iSpec;draw();};
+    const applyFibers=()=>{const p=parseFibers(document.getElementById('fiber-input').value,nFiber-1);fibers=p.length?p:[0];state.primary.fibers=fibers;document.getElementById('fiber-input').value=fibers.join(', ');draw();};
+    document.getElementById('fiber-apply').onclick=applyFibers;
+    document.getElementById('fiber-input').onkeydown=e=>{if(e.key==='Enter')applyFibers();};
+  };
+
+  const COLS=5;
+  const draw=()=>{
+    hideAll();
+    const grid=document.getElementById('fiber-grid');grid.innerHTML='';
+    let gmin=Infinity,gmax=-Infinity;
+    const slices=fibers.map(f=>{const sl=getSlice(iSpec,f);for(const v of sl){if(!isFinite(v))continue;if(v<gmin)gmin=v;if(v>gmax)gmax=v;}return sl;});
+    const avail=Math.min((window.innerWidth-220-60)/Math.min(fibers.length,COLS)-20,(window.innerHeight-120)/Math.ceil(fibers.length/COLS)-30);
+    const ps=Math.max(3,Math.min(14,Math.floor(avail/Math.max(nx,ny))));
+    fibers.forEach((f,fi)=>{
+      const rowIdx=Math.floor(fi/COLS);
+      if(fi%COLS===0){const rd=document.createElement('div');rd.className='fiber-row';rd.id=`fr-${rowIdx}`;grid.appendChild(rd);}
+      const row=document.getElementById(`fr-${rowIdx}`);
+      const wrap=document.createElement('div');wrap.className='fiber-map-wrap';
+      const lbl=document.createElement('div');lbl.className='fiber-map-label';lbl.textContent=`Fiber ${f}`;
+      const cv=document.createElement('canvas');cv.className='fiber-map-canvas';
+      renderSlice(cv,slices[fi],nx,ny,ps,gmin,gmax);
+      const sl=slices[fi];
+      cv.onmousemove=ev=>{const rect=cv.getBoundingClientRect();const ix=Math.floor((ev.clientX-rect.left)/ps),iy=Math.floor((ev.clientY-rect.top)/ps);if(ix>=0&&iy>=0&&ix<nx&&iy<ny)document.getElementById('readout').textContent=`Fiber ${f}  x=${ix} y=${iy}  val=${sl[iy*nx+ix].toExponential(4)}`;};
+      wrap.appendChild(lbl);wrap.appendChild(cv);row.appendChild(wrap);
+    });
+    grid.classList.add('visible');
+    drawColorbar(gmin,gmax);
+    document.getElementById('colorbar-wrap').classList.add('visible');
+  };
+  buildControls();draw();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NFRAMES STANDALONE
+// ═══════════════════════════════════════════════════════════════════════════════
+function renderNframes(hdu){
+  const[ny,nx]=hdu.shape;
+  const ctrl=document.getElementById('controls');ctrl.innerHTML=cmapScaleControls();
+  const draw=()=>{hideAll();const{vmin,vmax}=renderSlice(document.getElementById('main-canvas'),hdu.data,nx,ny,Math.max(3,Math.min(18,Math.floor(Math.min(window.innerWidth*.55,window.innerHeight*.7)/Math.max(nx,ny)))));drawColorbar(vmin,vmax);document.getElementById('canvas-wrap').style.display='inline-block';document.getElementById('colorbar-wrap').classList.add('visible');};
+  bindCmapScale(ctrl,draw);draw();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PSFCAM
+// ═══════════════════════════════════════════════════════════════════════════════
+function renderPSFCAM(hdu){
+  const[d4,d3,d2,d1]=hdu.shape;
+  const ny_map=d4,nx_map=d3,ny_psf=d2,nx_psf=d1;
+  const ctrl=document.getElementById('controls');
+
+  const getPSF=(ix,iy)=>{
+    const out=new Float64Array(ny_psf*nx_psf),base=iy*(nx_map*ny_psf*nx_psf)+ix*(ny_psf*nx_psf);
+    for(let i=0;i<ny_psf*nx_psf;i++)out[i]=hdu.data[base+i];
+    return out;
+  };
+
+  hideAll();
+  const gridEl=document.getElementById('psf-grid');gridEl.innerHTML='';
+
+  const detailWrap=document.createElement('div');detailWrap.className='psf-detail';
+  const detailCv=document.createElement('canvas');detailCv.id='psf-detail-canvas';
+  const detailLbl=document.createElement('div');detailLbl.className='psf-detail-label';detailLbl.id='psf-detail-label';
+  detailWrap.appendChild(detailCv);detailWrap.appendChild(detailLbl);
+
+  const table=document.createElement('table');table.id='psf-table';
+  const thumbs=[];
+  for(let iy=0;iy<ny_map;iy++){
+    const tr=document.createElement('tr');thumbs[iy]=[];
+    for(let ix=0;ix<nx_map;ix++){
+      const td=document.createElement('td');
+      const cv=document.createElement('canvas');cv.className='psf-cell';
+      td.appendChild(cv);tr.appendChild(td);thumbs[iy][ix]=cv;
+    }
+    table.appendChild(tr);
+  }
+  gridEl.appendChild(detailWrap);gridEl.appendChild(table);
+  gridEl.classList.add('visible');
+
+  const buildControls=()=>{
+    ctrl.innerHTML=cmapScaleControls()+`
+      <div class="ctrl-group"><div class="ctrl-label">Map X</div>
+        <div class="ctrl-row"><input type="range" id="psf-x-slider" min="0" max="${nx_map-1}" value="${state.psfcam.ix}" step="1">
+        <span class="ctrl-val" id="psf-x-val">${state.psfcam.ix}</span><span style="font-family:Space Mono;font-size:9px;color:var(--muted)">/ ${nx_map-1}</span></div>
+      </div>
+      <div class="ctrl-group"><div class="ctrl-label">Map Y</div>
+        <div class="ctrl-row"><input type="range" id="psf-y-slider" min="0" max="${ny_map-1}" value="${state.psfcam.iy}" step="1">
+        <span class="ctrl-val" id="psf-y-val">${state.psfcam.iy}</span><span style="font-family:Space Mono;font-size:9px;color:var(--muted)">/ ${ny_map-1}</span></div>
+      </div>
+      <div class="ctrl-group" style="justify-content:flex-end"><div class="ctrl-label" style="color:var(--dim)">Arrows/sliders · double-click bin to explore frames</div></div>`;
+    bindCmapScale(ctrl,()=>{rebuildGrid();drawDetail(state.psfcam.ix,state.psfcam.iy);});
+    document.getElementById('psf-x-slider').oninput=e=>{state.psfcam.ix=+e.target.value;document.getElementById('psf-x-val').textContent=state.psfcam.ix;selectAndDraw(state.psfcam.ix,state.psfcam.iy);};
+    document.getElementById('psf-y-slider').oninput=e=>{state.psfcam.iy=+e.target.value;document.getElementById('psf-y-val').textContent=state.psfcam.iy;selectAndDraw(state.psfcam.ix,state.psfcam.iy);};
+  };
+
+  const updateSliderUI=(ix,iy)=>{
+    const sx=document.getElementById('psf-x-slider'),sy=document.getElementById('psf-y-slider');
+    const vx=document.getElementById('psf-x-val'),vy=document.getElementById('psf-y-val');
+    if(sx){sx.value=ix;vx.textContent=ix;}if(sy){sy.value=iy;vy.textContent=iy;}
+  };
+
+  const drawDetail=(ix,iy)=>{
+    const sl=getPSF(ix,iy);
+    const{vmin,vmax}=renderSlice(detailCv,sl,nx_psf,ny_psf,8);
+    document.getElementById('psf-detail-label').textContent=`x=${ix}, y=${iy}  |  PSF ${nx_psf}×${ny_psf}  |  min=${vmin.toExponential(3)}  max=${vmax.toExponential(3)}`;
+    drawColorbar(vmin,vmax);document.getElementById('colorbar-wrap').classList.add('visible');
+  };
+
+  const selectAndDraw=(ix,iy)=>{
+    state.psfcam.ix=ix;state.psfcam.iy=iy;
+    document.querySelectorAll('.psf-cell').forEach(c=>c.classList.remove('selected'));
+    thumbs[iy]?.[ix]?.classList.add('selected');
+    thumbs[iy]?.[ix]?.scrollIntoView({block:'nearest',inline:'nearest',behavior:'smooth'});
+    drawDetail(ix,iy);updateSliderUI(ix,iy);
+  };
+
+  const rebuildGrid=()=>{
+    for(let iy=0;iy<ny_map;iy++) for(let ix=0;ix<nx_map;ix++){
+      renderSlice(thumbs[iy][ix],getPSF(ix,iy),nx_psf,ny_psf,1);
+      thumbs[iy][ix].onclick=()=>selectAndDraw(ix,iy);
+      // double-click → open bin explorer (H5 mode only)
+      thumbs[iy][ix].ondblclick=()=>openBinDrawer(ix,iy);
+      thumbs[iy][ix].title='Click: select  ·  Double-click: explore frames';
+    }
+  };
+
+  _psfNav=(dir)=>{
+    let{ix,iy}=state.psfcam;
+    if(dir==='right')ix=Math.min(ix+1,nx_map-1);
+    else if(dir==='left')ix=Math.max(ix-1,0);
+    else if(dir==='down')iy=Math.min(iy+1,ny_map-1);
+    else if(dir==='up')iy=Math.max(iy-1,0);
+    selectAndDraw(ix,iy);
+  };
+
+  buildControls();rebuildGrid();selectAndDraw(state.psfcam.ix,state.psfcam.iy);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SPECTRUM
+// ═══════════════════════════════════════════════════════════════════════════════
+function renderSpectrum(hdu){
+  const[d4,d3,d2,d1]=hdu.shape;
+  const ny=d4,nx=d3,nFiber=d2,nSpec=d1;
+  document.getElementById('controls').innerHTML=`<div class="ctrl-group"><div class="ctrl-label">Spatial collapse</div><div class="ctrl-row"><span style="font-family:Space Mono;font-size:11px;color:var(--accent3)">nansum over ${nx}×${ny} spatial pixels · ${nFiber} fibers</span></div></div>`;
+  const spectra=[];
+  for(let f=0;f<nFiber;f++){
+    const s=new Float64Array(nSpec);
+    for(let iy=0;iy<ny;iy++) for(let ix=0;ix<nx;ix++) for(let ic=0;ic<nSpec;ic++){
+      const v=hdu.data[iy*(nx*nFiber*nSpec)+ix*(nFiber*nSpec)+f*nSpec+ic];
+      if(isFinite(v))s[ic]+=v;
+    }
+    spectra.push(s);
+  }
+  const sumSpec=new Float64Array(nSpec);
+  for(let f=0;f<nFiber;f++) for(let ic=0;ic<nSpec;ic++) sumSpec[ic]+=spectra[f][ic];
+  const FIBER_COLORS=['#58a6ff','#f78166','#3fb950','#d2a8ff','#ffa657','#79c0ff'];
+  const SUM_COLOR='#ffffff';
+  hideAll();
+  const view=document.getElementById('spectrum-view');view.style.display='flex';
+  const area=document.getElementById('canvas-area');
+  const W=Math.max(500,area.clientWidth-80),H=Math.max(260,area.clientHeight-80);
+  const cv=document.getElementById('spectrum-canvas');cv.width=W;cv.height=H;
+  const ctx=cv.getContext('2d');
+  const ml=62,mr=24,mt=24,mb=48,pw=W-ml-mr,ph=H-mt-mb;
+  let ymin=Infinity,ymax=-Infinity;
+  for(let f=0;f<nFiber;f++) for(const v of spectra[f]){if(!isFinite(v))continue;if(v<ymin)ymin=v;if(v>ymax)ymax=v;}
+  for(const v of sumSpec){if(!isFinite(v))continue;if(v<ymin)ymin=v;if(v>ymax)ymax=v;}
+  const ypad=(ymax-ymin)*0.05||1;ymin-=ypad;ymax+=ypad;
+  const xToP=ic=>ml+ic/Math.max(1,nSpec-1)*pw;
+  const yToP=v=>mt+ph-(v-ymin)/(ymax-ymin+1e-30)*ph;
+  const drawAll=()=>{
+    ctx.fillStyle='#0a0c10';ctx.fillRect(0,0,W,H);
+    ctx.strokeStyle='#21262d';ctx.lineWidth=1;
+    for(let i=0;i<=5;i++){const y=mt+i*ph/5;ctx.beginPath();ctx.moveTo(ml,y);ctx.lineTo(ml+pw,y);ctx.stroke();const val=ymax-(ymax-ymin)*i/5;ctx.fillStyle='#8b949e';ctx.font='10px Space Mono,monospace';ctx.textAlign='right';ctx.fillText(val.toExponential(1),ml-6,y+4);}
+    for(let i=0;i<=8;i++){const x=ml+i*pw/8;ctx.beginPath();ctx.moveTo(x,mt);ctx.lineTo(x,mt+ph);ctx.stroke();const ch=Math.round(i*(nSpec-1)/8);ctx.fillStyle='#8b949e';ctx.font='10px Space Mono,monospace';ctx.textAlign='center';ctx.fillText(ch,x,mt+ph+16);}
+    ctx.strokeStyle='#30363d';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(ml,mt);ctx.lineTo(ml,mt+ph);ctx.lineTo(ml+pw,mt+ph);ctx.stroke();
+    ctx.fillStyle='#8b949e';ctx.font='11px Space Mono,monospace';ctx.textAlign='center';ctx.fillText('Spectral Channel',ml+pw/2,H-6);
+    ctx.save();ctx.translate(14,mt+ph/2);ctx.rotate(-Math.PI/2);ctx.fillText('nansum flux',0,0);ctx.restore();
+    for(let f=0;f<nFiber;f++){ctx.beginPath();ctx.strokeStyle=FIBER_COLORS[f%FIBER_COLORS.length];ctx.lineWidth=1.5;ctx.globalAlpha=0.75;for(let ic=0;ic<nSpec;ic++){const x=xToP(ic),y=yToP(spectra[f][ic]);ic===0?ctx.moveTo(x,y):ctx.lineTo(x,y);}ctx.stroke();}
+    ctx.globalAlpha=1;ctx.beginPath();ctx.strokeStyle=SUM_COLOR;ctx.lineWidth=3;for(let ic=0;ic<nSpec;ic++){const x=xToP(ic),y=yToP(sumSpec[ic]);ic===0?ctx.moveTo(x,y):ctx.lineTo(x,y);}ctx.stroke();
+  };
+  drawAll();
+  let hoverIC=-1;
+  cv.onmousemove=ev=>{
+    const rect=cv.getBoundingClientRect();const mx=ev.clientX-rect.left;
+    const ic=Math.round((mx-ml)/pw*(nSpec-1));
+    if(ic<0||ic>=nSpec){document.getElementById('readout').textContent='';return;}
+    if(ic===hoverIC)return;hoverIC=ic;
+    drawAll();
+    ctx.strokeStyle='rgba(255,255,255,0.2)';ctx.lineWidth=1;ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(xToP(ic),mt);ctx.lineTo(xToP(ic),mt+ph);ctx.stroke();ctx.setLineDash([]);
+    const vals=spectra.map(s=>s[ic].toExponential(3)).join('  |  ');
+    document.getElementById('readout').textContent=`ch=${ic}  fibers: ${vals}  sum: ${sumSpec[ic].toExponential(3)}`;
+  };
+  cv.onmouseleave=()=>{hoverIC=-1;document.getElementById('readout').textContent='';drawAll();};
+  const leg=document.getElementById('spectrum-legend');leg.innerHTML='';
+  for(let f=0;f<nFiber;f++){const item=document.createElement('div');item.className='spec-legend-item';const sw=document.createElement('div');sw.className='spec-legend-swatch';sw.style.background=FIBER_COLORS[f%FIBER_COLORS.length];item.appendChild(sw);item.appendChild(document.createTextNode(`Fiber ${f}`));leg.appendChild(item);}
+  const si=document.createElement('div');si.className='spec-legend-item';const ss=document.createElement('div');ss.className='spec-legend-swatch sum';ss.style.background=SUM_COLOR;si.appendChild(ss);si.appendChild(document.createTextNode('Sum'));leg.appendChild(si);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GENERIC FALLBACK
+// ═══════════════════════════════════════════════════════════════════════════════
+function renderGeneric(hdu){
+  const shape=hdu.shape,nx=shape[shape.length-1],ny=shape[shape.length-2]||1;
+  document.getElementById('controls').innerHTML=`<span style="font-family:Space Mono;font-size:11px;color:var(--muted)">Shape: [${shape.join(', ')}]</span>`;
+  hideAll();
+  const{vmin,vmax}=renderSlice(document.getElementById('main-canvas'),hdu.data.slice(0,nx*ny),nx,ny,Math.max(1,Math.floor(300/Math.max(nx,ny))));
+  drawColorbar(vmin,vmax);document.getElementById('canvas-wrap').style.display='inline-block';document.getElementById('colorbar-wrap').classList.add('visible');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HDU DISPATCH
+// ═══════════════════════════════════════════════════════════════════════════════
+function renderHDU(idx){
+  const hdu=hdus[idx];if(!hdu||!hdu.data)return;
+  const name=hdu.name.toUpperCase();_psfNav=null;
+  document.querySelectorAll('.hdu-btn').forEach(b=>b.classList.toggle('active',+b.dataset.idx===idx));
+  if(name==='PRIMARY')renderPrimary(hdu);
+  else if(name==='NFRAMES')renderNframes(hdu);
+  else if(name==='PSFCAM')renderPSFCAM(hdu);
+  else renderGeneric(hdu);
+}
+function renderHDUSpectrum(){
+  _psfNav=null;
+  document.querySelectorAll('.hdu-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelector('.hdu-btn[data-special="spectrum"]')?.classList.add('active');
+  const hdu=hdus.find(h=>h.name.toUpperCase()==='PRIMARY');
+  if(!hdu||!hdu.data){alert('No PRIMARY found.');return;}
+  renderSpectrum(hdu);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SIDEBAR
+// ═══════════════════════════════════════════════════════════════════════════════
+function buildSidebar(){
+  const list=document.getElementById('hdu-list');list.innerHTML='';
+  hdus.forEach((hdu,i)=>{
+    if(HIDDEN.has(hdu.name.toUpperCase()))return;
+    const btn=document.createElement('div');btn.className='hdu-btn';btn.dataset.idx=i;
+    btn.innerHTML=`<span class="hdu-idx">${i}</span><div><div class="hdu-name">${hdu.name}</div><div class="hdu-shape">${hdu.shape?hdu.shape.join('×'):'—'}</div></div>`;
+    btn.onclick=()=>{activeHDU=i;renderHDU(i);};
+    list.appendChild(btn);
+  });
+  if(hdus.find(h=>h.name.toUpperCase()==='PRIMARY')){
+    const div=document.createElement('div');div.className='sidebar-divider';list.appendChild(div);
+    const btn=document.createElement('div');btn.className='hdu-btn';btn.dataset.special='spectrum';
+    btn.innerHTML=`<span class="hdu-idx" style="color:var(--accent2)">★</span><div><div class="hdu-name">Spectrum</div><div class="hdu-shape">nansum 15×15</div></div>`;
+    btn.onclick=()=>renderHDUSpectrum();list.appendChild(btn);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BIN FRAME EXPLORER DRAWER (H5 only)
+// ═══════════════════════════════════════════════════════════════════════════════
+let drawerFrames=null; // {psfframes:[nFrames][nPsf*nPsf], rawframes:[nFrames][nSpec*nFib], timestamps, peaks, nPsf, nSpec, nFib}
+let drawerFrameIdx=0;
+
+async function openBinDrawer(ix,iy){
+  if(!h5Data){return;}
+  const key=`bin_${iy}_${ix}`;
+  showLoading(`Loading bin (${ix},${iy})…`);
+  try{
+    const grp=h5Data.get(key);
+    const ts=Float64Array.from(grp.get('timestamps').value);
+    const pk=Float64Array.from(grp.get('peaks').value);
+    const raw=grp.get('rawframes').value;     // flat [N, nSpec, nFib]
+    const psf=grp.get('psfframes').value;     // flat [N, nPsf, nPsf]
+    const rawShape=[...grp.get('rawframes').shape];
+    const psfShape=[...grp.get('psfframes').shape];
+    const N=rawShape[0],nSpec=rawShape[1],nFib=rawShape[2],nPsf=psfShape[1];
+
+    // apply current filter
+    const t0=parseTimeInput(document.getElementById('h5-t0').value);
+    const t1=parseTimeInput(document.getElementById('h5-t1').value);
+    const pkMin=parseFloat(document.getElementById('h5-peak-min').value)||0;
+    const pkMax=parseFloat(document.getElementById('h5-peak-max').value)||Infinity;
+    const idxs=[];
+    for(let k=0;k<N;k++){
+      if(t0!=null&&ts[k]<t0)continue;
+      if(t1!=null&&ts[k]>t1)continue;
+      if(pk[k]<pkMin||pk[k]>pkMax)continue;
+      idxs.push(k);
+    }
+    if(!idxs.length){hideLoading();alert('No frames pass the current filter for this bin.');return;}
+
+    // extract per-frame arrays
+    const psfFrames=[],rawFrames=[];
+    for(const fi of idxs){
+      psfFrames.push(psf.slice(fi*nPsf*nPsf,(fi+1)*nPsf*nPsf));
+      rawFrames.push(raw.slice(fi*nSpec*nFib,(fi+1)*nSpec*nFib));
+    }
+    drawerFrames={psfFrames,rawFrames,timestamps:idxs.map(k=>ts[k]),peaks:idxs.map(k=>pk[k]),nPsf,nSpec,nFib,ix,iy,total:idxs.length};
+    drawerFrameIdx=0;
+  }catch(e){hideLoading();alert('Could not load bin: '+e.message);return;}
+  hideLoading();
+
+  // Open drawer
+  document.getElementById('bin-drawer-title').textContent=`BIN (${ix}, ${iy})`;
+  document.getElementById('bin-drawer').classList.add('open');
+  const sl=document.getElementById('frame-slider');sl.min=0;sl.max=drawerFrames.total-1;sl.value=0;
+  sl.oninput=e=>{drawerFrameIdx=+e.target.value;drawDrawerFrame(drawerFrameIdx);};
+  document.getElementById('frame-prev').onclick=()=>{if(drawerFrameIdx>0){drawerFrameIdx--;sl.value=drawerFrameIdx;drawDrawerFrame(drawerFrameIdx);}};
+  document.getElementById('frame-next').onclick=()=>{if(drawerFrameIdx<drawerFrames.total-1){drawerFrameIdx++;sl.value=drawerFrameIdx;drawDrawerFrame(drawerFrameIdx);}};
+  drawDrawerFrame(0);
+}
+
+function parseTimeInput(s){
+  if(!s||!s.trim())return null;
+  const n=parseFloat(s);
+  if(!isNaN(n))return n;
+  const d=new Date(s);
+  if(!isNaN(d))return d.getTime()/1000;
+  return null;
+}
+
+function drawDrawerFrame(fi){
+  if(!drawerFrames)return;
+  const{psfFrames,rawFrames,timestamps,peaks,nPsf,nSpec,nFib,total}=drawerFrames;
+  document.getElementById('frame-counter').textContent=`${fi+1} / ${total}`;
+
+  // meta row
+  const ts=timestamps[fi];
+  const pk=peaks[fi];
+  const tsStr=ts?new Date(ts*1000).toISOString().replace('T',' ').slice(0,19):'—';
+  document.getElementById('frame-info-row').innerHTML=`
+    <div class="frame-stat"><div class="frame-stat-label">Timestamp</div><div class="frame-stat-val">${tsStr}</div></div>
+    <div class="frame-stat"><div class="frame-stat-label">Unix</div><div class="frame-stat-val">${ts?ts.toFixed(1):'—'}</div></div>
+    <div class="frame-stat"><div class="frame-stat-label">Peak</div><div class="frame-stat-val">${isFinite(pk)?pk.toFixed(4):'—'}</div></div>
+    <div class="frame-stat"><div class="frame-stat-label">Frame #</div><div class="frame-stat-val">${fi}</div></div>`;
+
+  // PSF image
+  const psfCv=document.getElementById('frame-psf-canvas');
+  const psfData=psfFrames[fi];
+  const ps=Math.max(3,Math.min(10,Math.floor(280/nPsf)));
+  renderSlice(psfCv,psfData,nPsf,nPsf,ps);
+
+  // Spectrum plot for this frame
+  const specCv=document.getElementById('frame-spec-canvas');
+  const rawData=rawFrames[fi]; // [nSpec*nFib] in order [s0f0, s0f1, ..., s1f0, ...]
+  // Extract per-fiber spectra
+  const FIBER_COLORS=['#58a6ff','#f78166','#3fb950','#d2a8ff','#ffa657'];
+  const W=300,H=200,ml=48,mr=10,mt=16,mb=36,pw=W-ml-mr,ph=H-mt-mb;
+  specCv.width=W;specCv.height=H;
+  const ctx=specCv.getContext('2d');
+  ctx.fillStyle='#0a0c10';ctx.fillRect(0,0,W,H);
+
+  let ymin=Infinity,ymax=-Infinity;
+  const fibers=[];
+  for(let f=0;f<nFib;f++){
+    const s=new Float64Array(nSpec);
+    for(let ic=0;ic<nSpec;ic++){s[ic]=rawData[ic*nFib+f];if(isFinite(s[ic])){if(s[ic]<ymin)ymin=s[ic];if(s[ic]>ymax)ymax=s[ic];}}
+    fibers.push(s);
+  }
+  const ypad=(ymax-ymin)*0.05||1;ymin-=ypad;ymax+=ypad;
+  const xP=ic=>ml+ic/Math.max(1,nSpec-1)*pw;
+  const yP=v=>mt+ph-(v-ymin)/(ymax-ymin+1e-30)*ph;
+
+  ctx.strokeStyle='#21262d';ctx.lineWidth=1;
+  for(let i=0;i<=4;i++){const y=mt+i*ph/4;ctx.beginPath();ctx.moveTo(ml,y);ctx.lineTo(ml+pw,y);ctx.stroke();const val=ymax-(ymax-ymin)*i/4;ctx.fillStyle='#8b949e';ctx.font='9px Space Mono,monospace';ctx.textAlign='right';ctx.fillText(val.toExponential(1),ml-4,y+3);}
+  for(let i=0;i<=4;i++){const x=ml+i*pw/4;ctx.beginPath();ctx.moveTo(x,mt);ctx.lineTo(x,mt+ph);ctx.stroke();const ch=Math.round(i*(nSpec-1)/4);ctx.fillStyle='#8b949e';ctx.font='9px Space Mono,monospace';ctx.textAlign='center';ctx.fillText(ch,x,mt+ph+13);}
+  ctx.strokeStyle='#30363d';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(ml,mt);ctx.lineTo(ml,mt+ph);ctx.lineTo(ml+pw,mt+ph);ctx.stroke();
+
+  for(let f=0;f<nFib;f++){
+    ctx.beginPath();ctx.strokeStyle=FIBER_COLORS[f%FIBER_COLORS.length];ctx.lineWidth=1.5;ctx.globalAlpha=0.85;
+    for(let ic=0;ic<nSpec;ic++){const x=xP(ic),y=yP(fibers[f][ic]);ic===0?ctx.moveTo(x,y):ctx.lineTo(x,y);}
+    ctx.stroke();
+  }
+  ctx.globalAlpha=1;
+  ctx.fillStyle='#8b949e';ctx.font='9px Space Mono,monospace';ctx.textAlign='center';ctx.fillText('Spectral Channel',ml+pw/2,H-4);
+}
+
+// Close drawer
+document.getElementById('bin-drawer-close').onclick=()=>document.getElementById('bin-drawer').classList.remove('open');
+document.getElementById('bin-drawer').onclick=e=>{if(e.target===document.getElementById('bin-drawer'))document.getElementById('bin-drawer').classList.remove('open');};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DUAL-HANDLE TIME SLIDER
+// ═══════════════════════════════════════════════════════════════════════════════
+let _tMin=0, _tMax=1; // global unix timestamp range of loaded H5
+
+function initTimeSlider(tMin, tMax){
+  _tMin=tMin; _tMax=tMax;
+  const s0=document.getElementById('h5-t0-slider');
+  const s1=document.getElementById('h5-t1-slider');
+  s0.min=0; s0.max=1000; s0.value=0;
+  s1.min=0; s1.max=1000; s1.value=1000;
+  document.getElementById('h5-t0').value=tMin.toFixed(2);
+  document.getElementById('h5-t1').value=tMax.toFixed(2);
+  updateTimeFill();
+  updateTimeLabels();
+  s0.oninput=()=>{
+    if(+s0.value>+s1.value-1) s0.value=+s1.value-1;
+    const t=_tMin+(_tMax-_tMin)*(+s0.value/1000);
+    document.getElementById('h5-t0').value=t.toFixed(2);
+    updateTimeFill(); updateTimeLabels();
+  };
+  s1.oninput=()=>{
+    if(+s1.value<+s0.value+1) s1.value=+s0.value+1;
+    const t=_tMin+(_tMax-_tMin)*(+s1.value/1000);
+    document.getElementById('h5-t1').value=t.toFixed(2);
+    updateTimeFill(); updateTimeLabels();
+  };
+}
+
+function updateTimeFill(){
+  const s0=document.getElementById('h5-t0-slider');
+  const s1=document.getElementById('h5-t1-slider');
+  const fill=document.getElementById('time-fill');
+  const lo=+s0.value/10; // percent
+  const hi=+s1.value/10;
+  fill.style.left=lo+'%';
+  fill.style.width=(hi-lo)+'%';
+}
+
+function updateTimeLabels(){
+  const s0=document.getElementById('h5-t0-slider');
+  const s1=document.getElementById('h5-t1-slider');
+  const t0=_tMin+(_tMax-_tMin)*(+s0.value/1000);
+  const t1=_tMin+(_tMax-_tMin)*(+s1.value/1000);
+  // Format as HH:MM:SS if range < 1 day, else as date+time
+  const fmt=t=>{
+    const d=new Date(t*1000);
+    const range=_tMax-_tMin;
+    if(range<86400) return d.toISOString().slice(11,19); // HH:MM:SS
+    return d.toISOString().slice(0,16).replace('T',' ');
+  };
+  document.getElementById('t0-val').textContent=fmt(t0);
+  document.getElementById('t1-val').textContent=fmt(t1);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// H5 FILTER BUTTON
+// ═══════════════════════════════════════════════════════════════════════════════
+document.getElementById('h5-apply').onclick=async()=>{
+  if(!h5Data||!h5Computed)return;
+  const t0=parseFloat(document.getElementById('h5-t0').value)||null;
+  const t1=parseFloat(document.getElementById('h5-t1').value)||null;
+  const pkMin=parseFloat(document.getElementById('h5-peak-min').value)||null;
+  const pkMax=parseFloat(document.getElementById('h5-peak-max').value)||null;
+  await recomputeH5(t0,t1,pkMin,pkMax,h5Computed.map_n,h5Computed.nfib,h5Computed.n_spec,h5Computed.n_psf);
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FILE LOADING
+// ═══════════════════════════════════════════════════════════════════════════════
+document.getElementById('file-btn').onclick=()=>document.getElementById('file-input').click();
+document.getElementById('file-input').onchange=e=>{
+  const file=e.target.files[0];if(!file)return;
+  showLoading(`Parsing ${file.name}…`);
+  document.getElementById('fname').textContent=file.name;
+  document.getElementById('h5-filter').classList.remove('visible');
+  h5Data=null;h5Computed=null;
+  // hide avg PSF panel since it's H5-only
+  document.getElementById('avgpsf-divider').style.display='none';
+  document.getElementById('avgpsf-label').style.display='none';
+  document.getElementById('avgpsf-canvas').style.display='none';
+  setTimeout(()=>{
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{hdus=FITS.parse(ev.target.result);buildSidebar();updateNframesPanel();let first=hdus.findIndex(h=>h.name.toUpperCase()==='PRIMARY'&&h.data);if(first<0)first=hdus.findIndex(h=>h.data&&!HIDDEN.has(h.name.toUpperCase())&&h.name.toUpperCase()!=='NFRAMES');activeHDU=first>=0?first:0;renderHDU(activeHDU);}
+      catch(err){alert('Parse error: '+err.message);}
+      hideLoading();
+    };
+    reader.readAsArrayBuffer(file);
+  },50);
+};
+document.getElementById('h5-btn').onclick=()=>document.getElementById('h5-input').click();
+document.getElementById('h5-input').onchange=e=>{const file=e.target.files[0];if(file)loadH5File(file);};
+
+// Drag & drop (both FITS and H5)
+document.body.ondragover=e=>e.preventDefault();
+document.body.ondrop=e=>{
+  e.preventDefault();const file=e.dataTransfer.files[0];if(!file)return;
+  const ext=file.name.split('.').pop().toLowerCase();
+  if(ext==='h5'||ext==='hdf5'){loadH5File(file);}
+  else{document.getElementById('file-input').files=e.dataTransfer.files;document.getElementById('file-input').dispatchEvent(new Event('change'));}
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// KEYBOARD NAVIGATION
+// ═══════════════════════════════════════════════════════════════════════════════
+document.addEventListener('keydown',e=>{
+  if(document.getElementById('bin-drawer').classList.contains('open')){
+    if(e.key==='Escape'){document.getElementById('bin-drawer').classList.remove('open');return;}
+    if(e.key==='ArrowRight'||e.key==='ArrowDown'){e.preventDefault();document.getElementById('frame-next').click();}
+    else if(e.key==='ArrowLeft'||e.key==='ArrowUp'){e.preventDefault();document.getElementById('frame-prev').click();}
+    return;
+  }
+  if(document.activeElement&&['INPUT','TEXTAREA'].includes(document.activeElement.tagName))return;
+  if(activeHDU<0)return;
+  const hdu=hdus[activeHDU];if(!hdu)return;
+  const name=hdu.name.toUpperCase();
+  if(name==='PRIMARY'){
+    const sl=document.getElementById('spec-slider');if(!sl)return;
+    const nSpec=hdu.shape[hdu.shape.length-1];
+    if(e.key==='ArrowRight'){e.preventDefault();state.primary.spec=Math.min(state.primary.spec+1,nSpec-1);sl.value=state.primary.spec;sl.dispatchEvent(new Event('input'));}
+    else if(e.key==='ArrowLeft'){e.preventDefault();state.primary.spec=Math.max(state.primary.spec-1,0);sl.value=state.primary.spec;sl.dispatchEvent(new Event('input'));}
+  }else if(name==='PSFCAM'&&_psfNav){
+    if(e.key==='ArrowRight'){e.preventDefault();_psfNav('right');}
+    else if(e.key==='ArrowLeft'){e.preventDefault();_psfNav('left');}
+    else if(e.key==='ArrowDown'){e.preventDefault();_psfNav('down');}
+    else if(e.key==='ArrowUp'){e.preventDefault();_psfNav('up');}
+  }
+});
+</script>
+</body>
+</html>
