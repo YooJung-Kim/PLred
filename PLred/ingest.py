@@ -48,6 +48,7 @@ def ingest_to_h5(
     compression='gzip',
     compression_opts=4,
     verbose=False,
+    spectral_orientation='horizontal',
 ):
     """
     Build the consolidated giant H5 (Step 2).
@@ -132,10 +133,15 @@ def ingest_to_h5(
     # ------------------------------------------------------------------
     plcam_type = 'spectra' if plcam_spectra is not None else 'raw'
 
+    transpose_plcam = spectral_orientation == 'vertical'
+
     if plcam_type == 'raw':
         ny, nx, roi = _probe_plcam_shape(plcam_fits_files, plcam_roi, dark_frame)
+        if transpose_plcam:
+            ny, nx = nx, ny   # shape after transposition
         if verbose:
-            print("PLcam frame shape after ROI: (%d, %d)" % (ny, nx))
+            print("PLcam frame shape after ROI%s: (%d, %d)" % (
+                ' + transpose' if transpose_plcam else '', ny, nx))
     else:
         spectra_array = _load_spectra(plcam_spectra, N)
         _, Nlambda, Nport = spectra_array.shape
@@ -194,6 +200,8 @@ def ingest_to_h5(
         'ingest_time':         ingest_time,
         # --- PLcam frames ---
         'plcam_type':          plcam_type,
+        'plcam_transposed':    transpose_plcam,
+        'spectral_orientation': spectral_orientation,
         'plcam_data_dir':      plcam_data_dir,
         'plcam_roi':           list(plcam_roi) if plcam_roi else None,
         'plcam_fits_files':    plcam_fits_files,      # full list of files used
@@ -228,6 +236,8 @@ def ingest_to_h5(
         h5f.attrs['psfcam_is_fast']        = psfcam_is_fast
         h5f.attrs['plcam_type']            = plcam_type
         h5f.attrs['plcam_dark_subtracted'] = dark_subtracted
+        h5f.attrs['plcam_transposed']      = transpose_plcam
+        h5f.attrs['spectral_orientation']  = spectral_orientation
         h5f.attrs['ingest_time']           = ingest_time
         h5f.attrs['t_start']               = t_start_rel   # 0.0 by definition
         h5f.attrs['t_end']                 = t_end_rel     # seconds from first frame
@@ -315,6 +325,7 @@ def ingest_to_h5(
             outpath, plcam_fits_files, matched_sc_inds,
             slowcam_fileinds, slowcam_frameinds,
             dark_frame, roi, N, verbose,
+            transpose=transpose_plcam,
         )
 
     print("Done. Giant H5 written to %s" % outpath)
@@ -459,7 +470,7 @@ def _load_spectra(plcam_spectra, N):
 
 def _write_plcam_frames(outpath, plcam_files, matched_sc_inds,
                          slowcam_fileinds, slowcam_frameinds,
-                         dark_frame, roi, N, verbose):
+                         dark_frame, roi, N, verbose, transpose=False):
     """
     Second-pass writer: open each PLcam FITS file with memmap (reads only
     the frames we need), apply ROI and optional dark subtraction, then write
@@ -514,7 +525,53 @@ def _write_plcam_frames(outpath, plcam_files, matched_sc_inds,
                             frame -= dark_frame[y0:y1, x0:x1]
                         else:
                             frame -= dark_frame
+                    if transpose:
+                        frame = frame.T
                     ds[out_idx] = frame
                     n_written += 1
 
     print("Wrote %d / %d PLcam frames" % (n_written, N))
+
+
+# ---------------------------------------------------------------------------
+# Unified config entry point  (reads new [Ingest] / [Instrument] schema)
+# ---------------------------------------------------------------------------
+
+def ingest_from_config_unified(configname):
+    """
+    Run ingest_to_h5() using the unified PLred pipeline config schema.
+
+    Reads [Instrument], [Ingest] sections.  The old ingest_from_config()
+    (using [Step1]/[PLcam]/[Output] sections) is kept for backward compat.
+    """
+    from configobj import ConfigObj
+    cfg = ConfigObj(configname)
+
+    ingest = cfg.get('Ingest', {})
+    instrument = cfg.get('Instrument', {})
+
+    step1_h5 = ingest.get('step1_h5', '').strip()
+    if not step1_h5:
+        raise ValueError("[Ingest] step1_h5 is required")
+
+    outpath = ingest.get('output', 'alldata.h5').strip() or 'alldata.h5'
+
+    dark = ingest.get('plcam_dark', '').strip()
+    plcam_dark = dark if dark else None
+
+    data_dir = ingest.get('plcam_data_dir', '').strip()
+    plcam_data_dir = data_dir if data_dir else None
+
+    roi_str = ingest.get('plcam_roi', '').strip()
+    plcam_roi = tuple(int(x) for x in roi_str.split(',')) if roi_str else None
+
+    orientation = instrument.get('spectral_orientation', 'horizontal').strip().lower()
+
+    return ingest_to_h5(
+        step1_h5=step1_h5,
+        outpath=outpath,
+        plcam_dark=plcam_dark,
+        plcam_data_dir=plcam_data_dir,
+        plcam_roi=plcam_roi,
+        spectral_orientation=orientation,
+    )

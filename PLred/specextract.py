@@ -98,10 +98,14 @@ def _write_extraction_header(header, extractor, extra=None):
 
     for key, val in info.items():
         hkey = f'HIERARCH SPEX {key.upper()[:12]}'
+        # FITS cards are 80 chars: HIERARCH keyword uses len(hkey) + " = ''" = +5
+        # leaving this many chars for the string value:
+        max_str = max(10, 80 - len(hkey) - 5)
+
         if isinstance(val, (list, np.ndarray)):
             s = ','.join(str(v) for v in np.asarray(val).ravel())
-            if len(s) > 65:
-                s = s[:62] + '...'
+            if len(s) > max_str:
+                s = s[:max_str - 3] + '...'
             try:
                 header[hkey] = s
             except Exception:
@@ -113,9 +117,9 @@ def _write_extraction_header(header, extractor, extra=None):
                 pass
         elif isinstance(val, str):
             # For file paths use basename to stay within FITS card limits
-            if len(val) > 65 and os.sep in val:
+            if len(val) > max_str and os.sep in val:
                 val = os.path.basename(val)
-            val = val[:65] if len(val) > 65 else val
+            val = val[:max_str] if len(val) > max_str else val
             try:
                 header[hkey] = val
             except Exception:
@@ -1099,10 +1103,16 @@ def make_FIRSTPL_extractor(model_file, plcam_roi=None, dark=None,
         _img_xmax = _new_xmax - _roi_x0
 
         if _new_xmin != xmin or _new_xmax != xmax:
-            print(
-                f"make_FIRSTPL_extractor: model range [{xmin},{xmax}) trimmed to "
-                f"[{_new_xmin},{_new_xmax}) to match plcam_roi x=[{_roi_x0},{_roi_x1}). "
-                f"Output nwav={_nwav} (was {nwav})."
+            raise ValueError(
+                f"plcam_roi x=[{_roi_x0},{_roi_x1}) does not fully cover the model "
+                f"spectral range [{xmin},{xmax}). "
+                f"The ROI must contain all model columns.\n"
+                f"  Missing left : {max(0, xmin  - _roi_x0)} columns  "
+                f"(extend ROI left to x0 ≤ {xmin})\n"
+                f"  Missing right: {max(0, _roi_x1 - xmax)} columns short  "
+                f"(extend ROI right to x1 ≥ {xmax})\n"
+                f"Either widen the PLcam ROI to cover [{xmin},{xmax}), "
+                f"or rebuild the model with xmin/xmax inside [{_roi_x0},{_roi_x1})."
             )
     else:
         _roi_y0   = 0
@@ -1230,19 +1240,31 @@ def make_trace_extractor(traces_or_model_file, xmin=None, xmax=None,
     from PLred.visPLred.spec import extract_spec_box
 
     if isinstance(traces_or_model_file, (str, os.PathLike)):
-        model   = load_spectrum_model(traces_or_model_file)
-        _xmin   = xmin if xmin is not None else model.xmin
-        _xmax   = xmax if xmax is not None else model.xmax
-        _XMIN   = model.XMIN
-        if model.trace_vals is None:
-            raise ValueError(
-                "Model file has no trace_vals.  Run SpectrumModel.trace_spectra() "
-                "before save_spectra_model()."
-            )
-        tv      = np.asarray(model.trace_vals, dtype=np.float64)
-        _traces = tv[:, _xmin - _XMIN : _xmax - _XMIN]
-        wav_map = model.wav_map
-        model_label = str(traces_or_model_file)
+        fpath = str(traces_or_model_file)
+        d = np.load(fpath, allow_pickle=False)
+
+        if 'traces' in d:
+            # ── traces.npz from plred-traces ──────────────────────────────
+            _traces = d['traces'].astype(np.float64)           # (nfib, nwav)
+            _xmin   = xmin if xmin is not None else int(d['xmin']) if 'xmin' in d else 0
+            _xmax   = xmax if xmax is not None else int(d['xmax']) if 'xmax' in d else _traces.shape[1]
+            wav_map = None
+        else:
+            # ── model.npz from SpectrumModel (has trace_vals) ────────────
+            model   = load_spectrum_model(fpath)
+            _xmin   = xmin if xmin is not None else model.xmin
+            _xmax   = xmax if xmax is not None else model.xmax
+            _XMIN   = model.XMIN
+            if model.trace_vals is None:
+                raise ValueError(
+                    "Model file has no trace_vals.  Run SpectrumModel.trace_spectra() "
+                    "before save_spectra_model()."
+                )
+            tv      = np.asarray(model.trace_vals, dtype=np.float64)
+            _traces = tv[:, _xmin - _XMIN : _xmax - _XMIN]
+            wav_map = model.wav_map
+
+        model_label = fpath
     else:
         _traces     = np.asarray(traces_or_model_file, dtype=np.float64)
         _xmin       = xmin
@@ -1278,6 +1300,149 @@ def make_trace_extractor(traces_or_model_file, xmin=None, xmax=None,
         info['xmax'] = _xmax
 
     return _attach_info(_extract, info)
+
+
+# ------------------------------------------------------------------
+# Calibration: trace file generation  (used by plred-traces CLI)
+# ------------------------------------------------------------------
+
+def make_trace_file(
+    fits_path,
+    nfib,
+    dark_path=None,
+    xmin=None,
+    xmax=None,
+    thres=0.05,
+    min_dist=6,
+    trace_width=4,
+    poly_deg=5,
+    outpath='traces.npz',
+    transpose=False,
+    plot=True,
+    verbose=True,
+):
+    """
+    Find fiber traces from a flat/lamp FITS and save to ``traces.npz``.
+
+    This is the core logic reused by the ``plred-traces`` CLI.  Run once
+    whenever fiber positions change (new instrument configuration, realignment).
+
+    Parameters
+    ----------
+    fits_path : str
+        Flat or lamp FITS file.  Multi-frame cubes ``(Nframes, h, w)`` are
+        averaged before tracing.
+    nfib : int
+        Expected number of fiber traces.
+    dark_path : str or None
+        Dark FITS file (also averaged if cube).  Subtracted before tracing.
+    xmin, xmax : int or None
+        Crop spectral columns before tracing.  Stored in the output npz.
+    thres : float
+        ``peakutils`` detection threshold (0–1).
+    min_dist : int
+        Minimum pixel separation between peaks.
+    trace_width : int
+        Cross-dispersion half-width for column-by-column tracking.
+    poly_deg : int
+        Polynomial degree for smoothing each trace.
+    outpath : str
+        Output path for ``traces.npz``.
+    transpose : bool
+        If True, transpose the image before tracing.  Use for detectors with
+        vertical spectral traces (e.g. IRPL/CRED2).
+    plot : bool
+        Show diagnostic plot (image + overlaid traces + cross-dispersion profile).
+    verbose : bool
+
+    Returns
+    -------
+    str
+        Path to the written ``traces.npz``.
+    """
+    # Load and average flat
+    with fits.open(fits_path) as hdl:
+        data = hdl[0].data.astype(np.float32)
+    if data.ndim == 3:
+        image = np.mean(data, axis=0)
+    else:
+        image = data
+
+    # Dark subtraction
+    if dark_path is not None:
+        with fits.open(dark_path) as hdl:
+            dark_data = hdl[0].data.astype(np.float32)
+        dark = np.mean(dark_data, axis=0) if dark_data.ndim == 3 else dark_data
+        image = image - dark
+
+    # Transpose for vertical-trace detectors
+    if transpose:
+        image = image.T
+
+    # Column crop
+    ny, nx = image.shape
+    _xmin = int(xmin) if xmin is not None else 0
+    _xmax = int(xmax) if xmax is not None else nx
+    img_crop = image[:, _xmin:_xmax]
+
+    if verbose:
+        print(f"Loaded {fits_path}: shape={image.shape}, crop=[{_xmin},{_xmax})")
+
+    # Peak finding → initial ylocs
+    ylocs = find_peaks(img_crop, nfib, thres=thres, min_dist=min_dist,
+                       plot=False, ref_col=None)
+
+    # Trace fitting
+    traces = find_traces(img_crop, nfib, ini_ys=ylocs, trace_width=trace_width,
+                         poly_deg=poly_deg, plot=False)
+
+    # Diagnostic plot
+    if plot:
+        import matplotlib.pyplot as plt
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        vmax = np.nanpercentile(img_crop, 99)
+        axes[0].imshow(img_crop, aspect='auto', origin='upper', cmap='viridis',
+                       vmin=0, vmax=max(vmax, 1.0))
+        for tr in traces:
+            axes[0].plot(np.arange(img_crop.shape[1]), tr, lw=0.8,
+                         color='tomato', alpha=0.8)
+        axes[0].set_title(f'Fiber traces ({nfib} fibers)')
+        axes[0].set_xlabel('x (spectral)')
+        axes[0].set_ylabel('y (cross-dispersion)')
+
+        profile = np.nansum(img_crop, axis=1)
+        axes[1].plot(profile, np.arange(ny), color='steelblue', lw=1)
+        for yloc in ylocs:
+            axes[1].axhline(yloc, color='tomato', lw=0.8, alpha=0.8)
+        axes[1].invert_yaxis()
+        axes[1].set_xlabel('Counts')
+        axes[1].set_ylabel('y pixel')
+        axes[1].set_title(f'Cross-dispersion profile  ({len(ylocs)} peaks found)')
+        axes[1].grid(alpha=0.3)
+        plt.suptitle(os.path.basename(fits_path))
+        plt.tight_layout()
+        plt.show()
+
+    # Save
+    np.savez(
+        outpath,
+        ylocs       = ylocs.astype(np.int32),
+        traces      = traces.astype(np.float64),
+        nfib        = np.array(nfib, dtype=np.int32),
+        xmin        = np.array(_xmin, dtype=np.int32),
+        xmax        = np.array(_xmax, dtype=np.int32),
+        transposed  = np.array(transpose),
+        ref_fits    = np.array(os.path.abspath(fits_path)),
+        thres       = np.array(thres),
+        min_dist    = np.array(min_dist, dtype=np.int32),
+        trace_width = np.array(trace_width, dtype=np.int32),
+        poly_deg    = np.array(poly_deg, dtype=np.int32),
+    )
+    if verbose:
+        print(f"traces.npz written to: {outpath}")
+        print(f"  ylocs  : {ylocs}")
+        print(f"  traces : shape {traces.shape}")
+    return outpath
 
 
 # ------------------------------------------------------------------
@@ -1632,8 +1797,15 @@ def _trim_matrix_to_roi(A, xmin, xmax, ny_full, roi_x0, roi_x1):
             f"ROI x=[{roi_x0}, {roi_x1}). Cannot extract spectra."
         )
 
-    if new_xmin == xmin and new_xmax == xmax:
-        return A.tocsr(), xmin, xmax   # nothing to trim
+    # Partial overlap means data is missing — raise, don't silently trim.
+    # The caller (make_FIRSTPL_extractor) surfaces a more informative message.
+    if new_xmin != xmin or new_xmax != xmax:
+        raise ValueError(
+            f"Model range [{xmin}, {xmax}) is not fully covered by "
+            f"ROI x=[{roi_x0}, {roi_x1})."
+        )
+
+    return A.tocsr(), xmin, xmax   # nothing to trim (full overlap)
 
     new_nwav    = new_xmax - new_xmin
     x_rel_start = new_xmin - xmin      # offset into original nwav axis
@@ -1696,3 +1868,74 @@ def extract_spec(im, ylocs, width=6):
         spec = np.sum(im[yloc - width: yloc + width, :], axis=0)
         specs.append(spec)
     return np.array(specs)
+
+
+# ---------------------------------------------------------------------------
+# Config-driven extraction entry point
+# ---------------------------------------------------------------------------
+
+def extract_from_config(configname):
+    """
+    Run spectral extraction using the unified PLred pipeline config schema.
+
+    Reads [Specextract] section and dispatches to the appropriate extractor:
+    - ``simple_box``    : make_simple_extractor(ylocs, ...)
+    - ``trace_box``     : make_trace_extractor(traces.npz, ...)
+    - ``simple_optimal``: make_simple_optimal_extractor(profile.npz, ...)
+    - ``FIRSTPL``       : make_FIRSTPL_extractor(model.npz, ...)
+    """
+    from configobj import ConfigObj
+    cfg = ConfigObj(configname)
+
+    se = cfg.get('Specextract', {})
+
+    input_h5  = se.get('input', 'map.h5').strip() or 'map.h5'
+    output    = se.get('output', 'couplingmap.fits').strip() or 'couplingmap.fits'
+    ext_type  = se.get('extractor', 'simple_box').strip()
+
+    roi_str = se.get('plcam_roi', '').strip()
+    plcam_roi = tuple(int(x) for x in roi_str.split(',')) if roi_str else None
+
+    wavsol_file = (se.get('wavsol_file', '') or
+                   cfg.get('WaveSol', {}).get('wavsol_file', '')).strip() or None
+
+    if ext_type == 'simple_box':
+        trace_file = se.get('trace_file', '').strip()
+        if not trace_file:
+            raise ValueError("[Specextract] trace_file is required for simple_box")
+        import numpy as _np
+        ylocs = _np.load(trace_file, allow_pickle=False)['ylocs'].astype(int)
+        extractor = make_simple_extractor(ylocs)
+
+    elif ext_type == 'trace_box':
+        trace_file = se.get('trace_file', '').strip()
+        if not trace_file:
+            raise ValueError("[Specextract] trace_file is required for trace_box")
+        extractor = make_trace_extractor(trace_file)
+
+    elif ext_type == 'simple_optimal':
+        profile_file = se.get('profile_file', '').strip()
+        if not profile_file:
+            raise ValueError("[Specextract] profile_file is required for simple_optimal")
+        extractor = make_simple_optimal_extractor(profile_file)
+
+    elif ext_type == 'FIRSTPL':
+        model_file  = se.get('model_file', '').strip()
+        if not model_file:
+            raise ValueError("[Specextract] model_file is required for FIRSTPL")
+        var_const   = float(se.get('var_const', 200) or 200)
+        thresh      = float(se.get('thresh', 0.1) or 0.1)
+        nonlin_file = se.get('nonlin_file', '').strip() or None
+        extractor = make_FIRSTPL_extractor(
+            model_file,
+            plcam_roi=plcam_roi,
+            var_const=var_const,
+            thresh=thresh,
+            nonlin_modelfile=nonlin_file,
+        )
+
+    else:
+        raise ValueError("Unknown extractor type: %r.  "
+                         "Choose simple_box, trace_box, simple_optimal, or FIRSTPL." % ext_type)
+
+    return extract_to_coupling_map(input_h5, extractor, output)

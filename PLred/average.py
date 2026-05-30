@@ -1110,6 +1110,105 @@ def _write_averaged_h5(
 # pixel_map
 # ---------------------------------------------------------------------------
 
+def average_to_h5_from_config(configname):
+    """
+    Run average_to_h5() using the unified PLred pipeline config schema.
+    Reads [Average] (and optionally [ROIViewer]) sections.
+    """
+    from configobj import ConfigObj
+    cfg = ConfigObj(configname)
+
+    av = cfg.get('Average', {})
+
+    input_h5 = av.get('input', 'alldata.h5').strip() or 'alldata.h5'
+    outpath  = av.get('output', 'map.h5').strip() or 'map.h5'
+
+    map_n    = int(av.get('map_n', 5))
+    map_width = float(av.get('map_width', 30))
+
+    def _opt_float(key):
+        v = av.get(key, '').strip()
+        return float(v) if v else None
+
+    xc           = _opt_float('xc')
+    yc           = _opt_float('yc')
+    pix2mas      = float(av.get('pix2mas', 16.2) or 16.2)
+    time_min     = _opt_float('time_min')
+    time_max     = _opt_float('time_max')
+    maxpix_min   = _opt_float('maxpix_min')
+    maxpix_max   = _opt_float('maxpix_max')
+    n_bootstrap  = int(av.get('n_bootstrap', 0) or 0)
+
+    roi_str = av.get('plcam_roi', '').strip()
+    plcam_roi = tuple(int(x) for x in roi_str.split(',')) if roi_str else None
+
+    return average_to_h5(
+        giant_h5=input_h5,
+        outpath=outpath,
+        map_n=map_n,
+        map_width=map_width,
+        xc=xc,
+        yc=yc,
+        time_min=time_min,
+        time_max=time_max,
+        maxpix_min=maxpix_min,
+        maxpix_max=maxpix_max,
+        pix2mas=pix2mas,
+        n_bootstrap=n_bootstrap,
+        plcam_roi=plcam_roi,
+    )
+
+
+def build_ROI_access_from_config(configname):
+    """
+    Run build_ROI_access() using the unified PLred pipeline config schema.
+    Reads [ROIViewer] and [Ingest] sections.
+
+    The config roi is in detector-space coordinates (y0, y1, x0, x1).
+    If the alldata.h5 was ingested with a hardware ROI, detector coords are
+    converted to local frame coords before passing to build_ROI_access().
+    """
+    import h5py
+    from configobj import ConfigObj
+    cfg = ConfigObj(configname)
+
+    rv = cfg.get('ROIViewer', {})
+    ingest = cfg.get('Ingest', {})
+
+    # The giant H5 produced by ingest step
+    giant_h5 = ingest.get('output', 'alldata.h5').strip() or 'alldata.h5'
+
+    roi_str = (rv.get('roi', '') or ingest.get('plcam_roi', '')).strip()
+    if not roi_str:
+        raise ValueError("[ROIViewer] roi is required")
+    roi_det = tuple(int(x) for x in roi_str.split(','))   # detector-space
+
+    # Convert detector-space ROI to local frame coordinates.
+    # If the H5 stores the full detector, local == detector.
+    # If the H5 was ingested with a hardware ROI, subtract the ingest offset.
+    with h5py.File(giant_h5, 'r') as f:
+        stored_ny, stored_nx = f['plcam/frames'].shape[1], f['plcam/frames'].shape[2]
+        ingest_roi = list(f.attrs.get('plcam_roi', [0, stored_ny, 0, stored_nx]))
+
+    iy0, iy1, ix0, ix1 = ingest_roi
+    dy0, dy1, dx0, dx1 = roi_det
+
+    # Local coords = detector coords − ingest offset, clamped to frame bounds
+    ly0 = max(0, dy0 - iy0)
+    ly1 = min(stored_ny, dy1 - iy0)
+    lx0 = max(0, dx0 - ix0)
+    lx1 = min(stored_nx, dx1 - ix0)
+    roi_local = (ly0, ly1, lx0, lx1)
+
+    zarr_path = rv.get('zarr_path', 'roi.h5').strip() or 'roi.h5'
+
+    return build_ROI_access(
+        giant_h5=giant_h5,
+        roi=roi_local,
+        zarr_path=zarr_path,
+    )
+
+
 def pixel_map(averaged_h5, py, px):
     """
     Extract a 2D response map for one PLcam pixel from an averaged H5.
