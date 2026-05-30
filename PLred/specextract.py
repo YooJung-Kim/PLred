@@ -1103,17 +1103,9 @@ def make_FIRSTPL_extractor(model_file, plcam_roi=None, dark=None,
         _img_xmax = _new_xmax - _roi_x0
 
         if _new_xmin != xmin or _new_xmax != xmax:
-            raise ValueError(
-                f"plcam_roi x=[{_roi_x0},{_roi_x1}) does not fully cover the model "
-                f"spectral range [{xmin},{xmax}). "
-                f"The ROI must contain all model columns.\n"
-                f"  Missing left : {max(0, xmin  - _roi_x0)} columns  "
-                f"(extend ROI left to x0 ≤ {xmin})\n"
-                f"  Missing right: {max(0, _roi_x1 - xmax)} columns short  "
-                f"(extend ROI right to x1 ≥ {xmax})\n"
-                f"Either widen the PLcam ROI to cover [{xmin},{xmax}), "
-                f"or rebuild the model with xmin/xmax inside [{_roi_x0},{_roi_x1})."
-            )
+            print(f"make_FIRSTPL_extractor: model range [{xmin},{xmax}) trimmed to "
+                  f"[{_new_xmin},{_new_xmax}) to match plcam_roi x=[{_roi_x0},{_roi_x1}). "
+                  f"Output nwav={_nwav} (was {nwav}).")
     else:
         _roi_y0   = 0
         _new_xmin = xmin
@@ -1797,15 +1789,8 @@ def _trim_matrix_to_roi(A, xmin, xmax, ny_full, roi_x0, roi_x1):
             f"ROI x=[{roi_x0}, {roi_x1}). Cannot extract spectra."
         )
 
-    # Partial overlap means data is missing — raise, don't silently trim.
-    # The caller (make_FIRSTPL_extractor) surfaces a more informative message.
-    if new_xmin != xmin or new_xmax != xmax:
-        raise ValueError(
-            f"Model range [{xmin}, {xmax}) is not fully covered by "
-            f"ROI x=[{roi_x0}, {roi_x1})."
-        )
-
-    return A.tocsr(), xmin, xmax   # nothing to trim (full overlap)
+    if new_xmin == xmin and new_xmax == xmax:
+        return A.tocsr(), xmin, xmax   # full overlap — nothing to trim
 
     new_nwav    = new_xmax - new_xmin
     x_rel_start = new_xmin - xmin      # offset into original nwav axis
