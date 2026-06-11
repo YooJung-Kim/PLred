@@ -47,6 +47,7 @@ def ingest_to_h5(
     slowcam_data_dir=None,
     plcam_roi=None,
     plcam_spectra=None,
+    psf_crop_width=None,
     compression='gzip',
     compression_opts=4,
     verbose=False,
@@ -146,9 +147,10 @@ def ingest_to_h5(
         print(f"[ingest_to_h5] PSFcam FITS files: {len(psfcam_fits_files)} file(s)")
         print(f"[ingest_to_h5] first PSFcam file: {psfcam_fits_files[0] if psfcam_fits_files else 'none'}")
         print(f"[ingest_to_h5] psfcam_dark      : {psfcam_dark}")
+        print(f"[ingest_to_h5] psf_crop_width   : {psf_crop_width}  (None = full frame, no crop)")
         psfcam_for_centroid = _load_psfcam_frames_from_fits(
             psfcam_fits_files, matched_sc_inds, slowcam_fileinds, slowcam_frameinds, N, verbose,
-            psfcam_dark=psfcam_dark)
+            psfcam_dark=psfcam_dark, crop_width=psf_crop_width)
 
     psfcam_h, psfcam_w = psfcam_for_centroid.shape[1], psfcam_for_centroid.shape[2]
 
@@ -298,6 +300,8 @@ def ingest_to_h5(
         h5f.attrs['t0_unix']               = t0            # absolute reference
         if plcam_roi:
             h5f.attrs['plcam_roi']         = list(plcam_roi)   # visible in dict(f.attrs)
+        if psf_crop_width is not None:
+            h5f.attrs['psf_crop_width']    = int(psf_crop_width)
 
         # ------------------------------------------------------------------
         # metadata group
@@ -478,21 +482,43 @@ def _probe_plcam_shape_from_array(plcam_array, plcam_roi):
 
 def _load_psfcam_frames_from_fits(psfcam_files, matched_sc_inds,
                                    slowcam_fileinds, slowcam_frameinds, N, verbose,
-                                   psfcam_dark=None):
-    """Load PSFcam frames from FITS when psfcam_is_fast=False (PSFcam = slowcam)."""
-    # Determine frame shape from first available file
+                                   psfcam_dark=None, crop_width=None):
+    """Load PSFcam frames from FITS when psfcam_is_fast=False (PSFcam = slowcam).
+
+    crop_width : int or None
+        If given, crop each frame to a (2*crop_width) × (2*crop_width) stamp centred
+        on the frame, matching what sort.py does for the fastcam PSFcam path.
+        When None the full frame is stored (may give wrong centroids for large detectors).
+    """
+    # Determine raw frame shape from first available file
     psf_h = psf_w = None
     for fpath in psfcam_files:
         if os.path.exists(fpath):
             sample = fits.getdata(fpath)
             psf_h, psf_w = sample.shape[-2], sample.shape[-1]
+            print(f"[_load_psfcam] first file: {fpath}")
+            print(f"[_load_psfcam] raw frame shape: ({psf_h}, {psf_w})")
             break
     if psf_h is None:
         raise FileNotFoundError("No PSFcam FITS files found: %s" % psfcam_files[:3])
 
-    out = np.zeros((N, psf_h, psf_w), dtype='float32')
+    # Determine crop region (centre of frame)
+    if crop_width is not None:
+        cw   = int(crop_width)
+        cy   = psf_h // 2
+        cx   = psf_w // 2
+        r0, r1 = cy - cw, cy + cw
+        c0, c1 = cx - cw, cx + cw
+        out_h, out_w = r1 - r0, c1 - c0
+        print(f"[_load_psfcam] centre crop: rows [{r0}:{r1}], cols [{c0}:{c1}]  →  ({out_h}, {out_w})")
+    else:
+        r0, r1, c0, c1 = 0, psf_h, 0, psf_w
+        out_h, out_w   = psf_h, psf_w
+        print(f"[_load_psfcam] no crop — using full frame ({out_h}, {out_w})")
 
-    # Load PSF dark if provided
+    out = np.zeros((N, out_h, out_w), dtype='float32')
+
+    # Load and validate PSF dark
     dark_frame = None
     if psfcam_dark is not None:
         if isinstance(psfcam_dark, np.ndarray):
@@ -500,14 +526,33 @@ def _load_psfcam_frames_from_fits(psfcam_files, matched_sc_inds,
         else:
             try:
                 dark_frame = fits.getdata(psfcam_dark).astype('float32')
-            except Exception:
+                if dark_frame.ndim == 3:
+                    dark_frame = dark_frame.mean(axis=0)
+                print(f"[_load_psfcam] dark loaded: shape={dark_frame.shape}  mean={dark_frame.mean():.1f}")
+            except Exception as e:
+                print(f"[_load_psfcam] WARNING: could not load PSFcam dark '{psfcam_dark}': {e}")
                 dark_frame = None
+
+        if dark_frame is not None:
+            if dark_frame.shape != (psf_h, psf_w):
+                print(f"[_load_psfcam] WARNING: dark shape {dark_frame.shape} != frame shape "
+                      f"({psf_h},{psf_w}) — dark NOT applied")
+                dark_frame = None
+            else:
+                # Pre-crop dark to match the output crop
+                dark_frame = dark_frame[r0:r1, c0:c1]
+                print(f"[_load_psfcam] dark cropped to: {dark_frame.shape}  mean={dark_frame.mean():.1f}")
+    else:
+        print("[_load_psfcam] no PSFcam dark provided")
+
     # Build file_idx → [(out_idx, frame_idx)] mapping
     file_map = {}
     for out_idx, sc_ind in enumerate(matched_sc_inds):
         file_idx  = int(slowcam_fileinds[sc_ind])
         frame_idx = int(slowcam_frameinds[sc_ind])
         file_map.setdefault(file_idx, []).append((out_idx, frame_idx))
+
+    print(f"[_load_psfcam] loading from {len(file_map)} FITS file(s), {N} frames total")
 
     for file_idx, entries in tqdm(sorted(file_map.items()),
                                   desc='Loading PSFcam frames', disable=not verbose):
@@ -523,19 +568,18 @@ def _load_psfcam_frames_from_fits(psfcam_files, matched_sc_inds,
             data = hdul[0].data
         with hdul:
             for out_idx, frame_idx in entries:
-                frame = data[frame_idx].astype('float32')
+                frame = data[frame_idx][r0:r1, c0:c1].astype('float32')
                 if dark_frame is not None:
-                    try:
-                        frame = frame - dark_frame
-                    except Exception:
-                        # If shapes mismatch, attempt to collapse or crop dark
-                        df = dark_frame
-                        if df.ndim == 3:
-                            df = df.mean(axis=0)
-                        df = df.astype('float32')
-                        if df.shape == frame.shape:
-                            frame = frame - df
+                    frame = frame - dark_frame
                 out[out_idx] = frame
+
+    # Sanity check on first loaded frame
+    nonzero = np.count_nonzero(out)
+    print(f"[_load_psfcam] loaded {N} frames, non-zero values: {nonzero} "
+          f"({'OK' if nonzero > 0 else 'WARNING: all zeros!'})")
+    if nonzero > 0:
+        print(f"[_load_psfcam] frame[0] peak={out[0].max():.1f}  "
+              f"argmax={np.unravel_index(out[0].argmax(), out[0].shape)}")
 
     return out
 
@@ -744,6 +788,12 @@ def _ingest_from_new_config(cfg):
     plcam_roi = tuple(int(x) for x in roi_str.split(',')) if roi_str else None
     print(f"[ingest] PLcam ROI: {plcam_roi}")
 
+    try:
+        psf_crop_width = int(roi_sec.get('PSFcam_crop_width', 20) or 20)
+    except Exception:
+        psf_crop_width = 20
+    print(f"[ingest] PSFcam_crop_width: {psf_crop_width}")
+
     step1_h5 = outputs_sec.get('timestamp_match_output', 'fastcam.h5').strip() or 'fastcam.h5'
     outpath  = outputs_sec.get('ingest_output', 'alldata.h5').strip() or 'alldata.h5'
     print(f"[ingest] step1_h5 : {step1_h5}")
@@ -760,6 +810,7 @@ def _ingest_from_new_config(cfg):
         plcam_data_dir=plcam_data_dir,
         slowcam_data_dir=slowcam_data_dir,
         plcam_roi=plcam_roi,
+        psf_crop_width=psf_crop_width,
         spectral_orientation=orientation,
     )
 
@@ -817,6 +868,12 @@ def ingest_from_config_unified(configname):
     roi_str = ingest.get('plcam_roi', '').strip()
     plcam_roi = tuple(int(x) for x in roi_str.split(',')) if roi_str else None
 
+    # PSFcam crop width for the psfcam_is_fast=False path
+    try:
+        psf_crop_width = int(cfg.get('Sort', {}).get('crop_width', 20) or 20)
+    except Exception:
+        psf_crop_width = 20
+
     orientation = instrument.get('spectral_orientation', 'horizontal').strip().lower()
 
     # [ROIViewer].roi falls back to plcam_roi — store for build_ROI_access_from_config
@@ -830,5 +887,6 @@ def ingest_from_config_unified(configname):
         plcam_data_dir=plcam_data_dir,
         slowcam_data_dir=slowcam_data_dir,
         plcam_roi=plcam_roi,
+        psf_crop_width=psf_crop_width,
         spectral_orientation=orientation,
     )
