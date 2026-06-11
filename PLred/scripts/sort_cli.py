@@ -29,9 +29,12 @@ def main():
 
     cfg = ConfigObj(args.config)
 
-    # Unified config: [Sort].output is the step1 H5 path
+    # Prefer the new [Outputs] layout, then unified [Sort], then legacy [Output].
+    outputs_sec = cfg.get('Outputs', {})
     sort_sec = cfg.get('Sort', {})
-    if sort_sec.get('output', '').strip():
+    if outputs_sec.get('timestamp_match_output', '').strip():
+        fastcam_h5 = outputs_sec['timestamp_match_output'].strip()
+    elif sort_sec.get('output', '').strip():
         fastcam_h5 = sort_sec['output'].strip()
     else:
         # Legacy [Output] section
