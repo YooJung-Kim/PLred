@@ -31,8 +31,17 @@ def main():
 
     cfg      = ConfigObj(args.config)
     se_cfg   = cfg.get('Specextract', {})
-    cm_fits  = se_cfg.get('output', 'couplingmap.fits').strip() or 'couplingmap.fits'
-    map_h5   = se_cfg.get('input', '').strip() or None
+    outputs  = cfg.get('Outputs', {})
+    cm_fits  = (
+        outputs.get('couplingmap_output', '').strip()
+        or se_cfg.get('output', '').strip()
+        or 'couplingmap.fits'
+    )
+    map_h5   = (
+        outputs.get('average_output', '').strip()
+        or se_cfg.get('input', '').strip()
+        or None
+    )
     ext_type = se_cfg.get('extractor', 'simple_box').strip()
     plots_dir = get_plots_dir(args.config)
 

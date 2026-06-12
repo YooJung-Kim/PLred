@@ -32,7 +32,11 @@ def main():
     from PLred.scripts._diagnostics import plot_step3, save_diagnostic, get_plots_dir
 
     cfg        = ConfigObj(args.config)
-    alldata_h5 = cfg.get('Ingest', {}).get('output', 'alldata.h5').strip() or 'alldata.h5'
+    alldata_h5 = (
+        cfg.get('Outputs', {}).get('ingest_output', '').strip()
+        or cfg.get('Ingest', {}).get('output', '').strip()
+        or 'alldata.h5'
+    )
 
     save_diagnostic(plot_step3(alldata_h5), get_plots_dir(args.config), '3_roi.png')
 
