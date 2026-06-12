@@ -59,6 +59,8 @@ Output FITS structure — Mode B
     [1] traces   : (nfib, nx)             fiber traces (if available)
     header: copied from input + SPEX_* extraction metadata
 
+
+** This part is not tested! needs to be fixed
 Variance estimation (Mode A, three-tier priority)
 --------------------------------------------------
 1. Bootstrap  — if /bootstrap/avg_PLcam exists in the H5 and use_bootstrap=True.

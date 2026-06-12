@@ -1,4 +1,7 @@
 """
+
+** Note! This is not tested.
+
 Wavelength calibration utilities for PLred.
 
 Two calibration modes
