@@ -480,7 +480,7 @@ def run_astrometry(mapmodel, wav_indices, fibinds=None, n_trim=1,
         ax.axhline(0, color='gray', lw=0.7, ls='--')
         ax.set_xlabel('Wavelength index')
         ax.set_ylabel('Centroid shift (mas)')
-        ax.set_title('Astrometric centroid track')
+        ax.set_title('Spectroastrometry results')
         ax.legend()
         plt.tight_layout()
         plt.show()
