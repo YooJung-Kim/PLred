@@ -368,7 +368,7 @@ class CouplingMapModel:
 
         for fibind in tqdm(range(self.nfib)):
 
-            modeled_coeffs, modeled_recon, all_map_input = make_interpolation_model(self.normdata[:,:,fibind,:], 
+            modeled_coeffs, modeled_recon, all_map_input = make_interpolation_model(self.normdata[:,:,fibind,:].copy(),
                                                                                     self.pos_mas, 
                                                                                     wav_fitrange = wav_fitrange, 
                                                                                     wav_reconrange = wav_reconrange, 
