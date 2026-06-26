@@ -286,6 +286,7 @@ class CouplingMapModel:
         self.data = None
         self.datavar = None
         self.datanormvar = None
+        self.psfcam = None
 
         if mapdata is not None:
             print("loading mapdata")
@@ -294,6 +295,9 @@ class CouplingMapModel:
             self.data = self.map_fits[0].data
             self.map_header = self.map_fits[0].header
             self.numframes = self.map_fits[1].data
+            # HDU[2] is 'psfcam' (new) or 'reserved' zeros (legacy)
+            if self.map_fits[2].header.get('EXTNAME', '').lower() == 'psfcam':
+                self.psfcam = self.map_fits[2].data
             self.datavar = self.map_fits[3].data
             self.datanormvar = self.map_fits[4].data
             self.pos_mas = np.linspace(self.map_header['XMIN'], self.map_header['XMAX'], self.map_header['MAP_N'])

@@ -47,7 +47,8 @@ Output FITS structure — Mode A (HDU indices match CouplingMapModel(mapdata=...
 ----------------------------------------------------------------------------------
     [0] primary  : (map_n, map_n, nfib, nwav)  mean extracted spectra
     [1] nframes  : (map_n, map_n)               frames per bin
-    [2] reserved : (map_n, map_n, nfib, nwav)   zeros (placeholder)
+    [2] psfcam   : (map_n, map_n, ny, nx)       mean PSF-camera image per bin
+                   (zeros / EXTNAME='reserved' if avg_PSFcam absent in H5)
     [3] var      : (map_n, map_n, nfib, nwav)   variance of the mean per bin
     [4] normvar  : (map_n, map_n, nfib, nwav)   normalized variance
     [5] traces   : (nfib, nx)                   fiber traces (if available)
@@ -243,6 +244,12 @@ def extract_to_coupling_map(
         x_mas     = f['metadata/x_mas'][:]                   # (map_n,)
         y_mas     = f['metadata/y_mas'][:]                   # (map_n,)
 
+        # PSF-camera averages per bin — present when average_to_h5() stored them
+        if 'avg_PSFcam' in f:
+            avg_psfcam = f['avg_PSFcam'][:]                  # (map_n, map_n, psf_ny, psf_nx)
+        else:
+            avg_psfcam = None
+
         # Detector-space pixel bounds of the stored PLcam frames.
         # Present only when average_to_h5() was called with plcam_roi=.
         if 'metadata/plcam_roi' in f:
@@ -433,8 +440,13 @@ def extract_to_coupling_map(
     hdu1 = fits.ImageHDU(nframes.astype(np.int32))
     hdu1.header['EXTNAME'] = 'nframes'
 
-    hdu2 = fits.ImageHDU(np.zeros((map_n, map_n, nfib, nwav), dtype=np.float32))
-    hdu2.header['EXTNAME'] = 'reserved'
+    if avg_psfcam is not None:
+        hdu2 = fits.ImageHDU(avg_psfcam.astype(np.float32))
+        hdu2.header['EXTNAME'] = 'psfcam'
+        hdu2.header['COMMENT'] = 'Mean PSF-camera image per spatial grid bin'
+    else:
+        hdu2 = fits.ImageHDU(np.zeros((map_n, map_n, nfib, nwav), dtype=np.float32))
+        hdu2.header['EXTNAME'] = 'reserved'
 
     hdu3 = fits.ImageHDU(datavar)
     hdu3.header['EXTNAME'] = 'var'
